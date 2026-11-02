@@ -886,7 +886,6 @@ function App() {
               <AsistoLogo variant={theme === 'dark' ? 'dark' : 'light'} height={68} />
             </div>
             <p className="login-subtitle">Plataforma de control de asistencia</p>
-            <span className="secure-badge">Acceso Seguro</span>
           </div>
           
           <form onSubmit={handleLogin} className="login-form">
@@ -1125,7 +1124,6 @@ function App() {
               {/* Row 1: Top Row */}
               <div className="top-row">
                 <div className="card top-summary-card">
-                  <span className="badge-active">Sistema Activo</span>
                   <h3>Plataforma de Control de Asistencia</h3>
                   <p className="panel-description">
                     Monitorea de forma centralizada la asistencia, puntualidad y horas extras.
@@ -1135,10 +1133,7 @@ function App() {
                 </div>
 
                 <div className="card top-punctual-card">
-                  <span className="section-chip" style={{ background: 'var(--primary-soft)', color: 'var(--primary)', border: '1px solid color-mix(in srgb, var(--primary) 18%, transparent)' }}>
-                    Puntualidad
-                  </span>
-                  <h3>Más Temprano Llegaron</h3>
+                  <h3 style={{ marginTop: 0 }}>Más Temprano Llegaron</h3>
                   <div className="punctual-list">
                     {topPunctualEmployees.length > 0 ? (
                       topPunctualEmployees.map((emp, index) => (
@@ -1157,8 +1152,7 @@ function App() {
                 <div className="card quick-attendance-card top-quick-card">
                   <div className="quick-attendance-head compact">
                     <div>
-                      <span className="section-chip">Reportes</span>
-                      <h3>Quincena</h3>
+                      <h3 style={{ marginTop: 0 }}>Quincena</h3>
                       <p className="chart-subtitle">PDF consolidado con todos los empleados y datos completos del periodo actual.</p>
                     </div>
                   </div>
