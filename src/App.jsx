@@ -1377,7 +1377,7 @@ function App() {
                 </div>
                 <div className="card metric-card accent">
                   <div className="metric-header">
-                    <span>REPORTES / EXTRA</span>
+                    <span>HORAS EXTRAS</span>
                     <IconReportes size={18} />
                   </div>
                   <div className="metric-body">
