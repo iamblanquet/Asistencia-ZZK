@@ -99,6 +99,7 @@ function getAvatarBackground(employeeId) {
 function App() {
   const latestLoad = useRef(0);
   const loadedDeviceId = useRef('');
+  const syncInFlight = useRef(new Set());
 
   const [currentUser, setCurrentUser] = useState(() => {
     if (typeof window === 'undefined') return null;
@@ -138,12 +139,16 @@ function App() {
   const [deviceInfo, setDeviceInfo] = useState(null);
   const [fetchedAt, setFetchedAt] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [syncingDeviceIds, setSyncingDeviceIds] = useState([]);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
 
   // Nuevos estados para administración de múltiples biométricos
   const [devices, setDevices] = useState([]);
   const [activeDeviceId, setActiveDeviceId] = useState('');
+  const currentView = useRef({ range, deviceId: activeDeviceId });
+  currentView.current = { range, deviceId: activeDeviceId };
+  const syncing = syncingDeviceIds.includes(activeDeviceId);
   const [selectedEditDeviceId, setSelectedEditDeviceId] = useState('');
   const [editName, setEditName] = useState('');
   const [editIp, setEditIp] = useState('');
@@ -184,15 +189,6 @@ function App() {
       
       setCurrentUser(data.user);
       
-      // Load devices and events after login
-      const list = await loadDevices();
-      const firstDev = list?.[0];
-      if (firstDev) {
-        setActiveDeviceId(firstDev.id);
-        loadEvents(range, firstDev.id);
-      } else {
-        loadEvents(range);
-      }
     } catch (err) {
       setLoginError(err.message || 'Usuario o contraseña incorrectos.');
     } finally {
@@ -213,6 +209,12 @@ function App() {
       window.localStorage.removeItem('zkteco-token');
       window.localStorage.removeItem('zkteco-user');
       setCurrentUser(null);
+      latestLoad.current += 1;
+      loadedDeviceId.current = '';
+      setDevices([]);
+      setEvents([]);
+      setEmployees([]);
+      setFetchedAt(null);
     }
   }
 
@@ -312,7 +314,11 @@ function App() {
         setActiveDeviceId(firstDev.id);
         loadEvents(range, firstDev.id);
       } else {
-        loadEvents(range);
+        setActiveDeviceId('');
+        setEmployees([]);
+        setEvents([]);
+        setDeviceInfo(null);
+        setFetchedAt(null);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -582,6 +588,23 @@ function App() {
       setError(requestError.message);
     } finally {
       if (requestId === latestLoad.current) setLoading(false);
+    }
+  }
+
+  async function handleSync() {
+    const deviceId = activeDeviceId;
+    if (!deviceId || syncInFlight.current.has(deviceId)) return;
+    syncInFlight.current.add(deviceId);
+    setSyncingDeviceIds([...syncInFlight.current]);
+    setError('');
+    try {
+      await apiRequest(`/api/device/sync?deviceId=${encodeURIComponent(deviceId)}`, { method: 'POST' });
+      if (loadedDeviceId.current === deviceId) await loadEvents(currentView.current.range, deviceId);
+    } catch (syncError) {
+      if (loadedDeviceId.current === deviceId) setError(`${syncError.message} Los datos guardados siguen disponibles.`);
+    } finally {
+      syncInFlight.current.delete(deviceId);
+      setSyncingDeviceIds([...syncInFlight.current]);
     }
   }
 
@@ -875,7 +898,7 @@ function App() {
     }));
   }
 
-  const isConnected = !error && fetchedAt;
+  const hasSavedData = employees.length > 0 || events.length > 0;
 
   if (!currentUser) {
     return (
@@ -1090,8 +1113,8 @@ function App() {
           {currentUser?.role === 'admin' && (
             <>
               <div className="sidebar-status">
-                <span className={`status-dot ${isConnected ? 'online' : 'offline'}`} />
-                {isConnected ? 'Dispositivo Online' : 'Dispositivo Offline'}
+                <span className={`status-dot ${hasSavedData ? 'online' : 'offline'}`} />
+                {hasSavedData ? 'Historial disponible' : 'Sin historial'}
               </div>
               <div>Logs en equipo: {deviceInfo?.logCounts ?? '-'}</div>
             </>
@@ -1241,9 +1264,9 @@ function App() {
                   <div className="card top-device-card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                       <h3 style={{ margin: 0 }}>Lector Biométrico</h3>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.74rem', fontWeight: 700, color: isConnected ? 'var(--success)' : 'var(--danger)' }}>
-                        <span className={`status-dot ${isConnected ? 'online' : 'offline'}`} />
-                        {isConnected ? 'Online' : 'Offline'}
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.74rem', fontWeight: 700, color: hasSavedData ? 'var(--success)' : 'var(--text-soft)' }}>
+                        <span className={`status-dot ${hasSavedData ? 'online' : 'offline'}`} />
+                        {hasSavedData ? 'Datos guardados' : 'Sin historial'}
                       </span>
                     </div>
                     <div className="lector-details">
@@ -1265,16 +1288,19 @@ function App() {
                       </div>
                     </div>
                     <div className="lector-actions">
-                      <button className="btn-action btn-action-secondary" onClick={() => loadEvents()} disabled={loading}>Probar IP</button>
-                      <button className="btn-action btn-action-primary" onClick={() => loadEvents()} disabled={loading}>Sincronizar</button>
+                      <button className="btn-action btn-action-secondary" onClick={() => loadEvents()} disabled={loading}>Actualizar</button>
+                      <button className="btn-action btn-action-primary" onClick={handleSync} disabled={syncing || !activeDeviceId}>
+                        <RefreshCw size={14} className={syncing ? 'spin' : ''} />
+                        {syncing ? 'Sincronizando...' : 'Sincronizar'}
+                      </button>
                     </div>
                   </div>
                 ) : (
                   <div className="card top-device-card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                       <h3 style={{ margin: 0 }}>Horario y Jornada Activa</h3>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.74rem', fontWeight: 700, color: isConnected ? 'var(--success)' : 'var(--text-soft)' }}>
-                        <span className={`status-dot ${isConnected ? 'online' : 'offline'}`} />
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.74rem', fontWeight: 700, color: hasSavedData ? 'var(--success)' : 'var(--text-soft)' }}>
+                        <span className={`status-dot ${hasSavedData ? 'online' : 'offline'}`} />
                         {device.name || 'Sede Activa'}
                       </span>
                     </div>
@@ -1292,13 +1318,16 @@ function App() {
                         <span className="lector-detail-value">{schedule.graceMinutes} min</span>
                       </div>
                       <div className="lector-detail-row">
-                        <span className="lector-detail-label">Última actualización:</span>
+                        <span className="lector-detail-label">Última sincronización:</span>
                         <span className="lector-detail-value">{fetchedAt ? timeLabel(fetchedAt) : '-'}</span>
                       </div>
                     </div>
                     <div className="lector-actions">
                       <button className="btn-action btn-action-secondary" onClick={openConfigModal}>Ajustar Turno</button>
-                      <button className="btn-action btn-action-primary" onClick={() => loadEvents()} disabled={loading}>Actualizar</button>
+                      <button className="btn-action btn-action-primary" onClick={handleSync} disabled={syncing || !activeDeviceId}>
+                        <RefreshCw size={14} className={syncing ? 'spin' : ''} />
+                        {syncing ? 'Sincronizando...' : 'Sincronizar'}
+                      </button>
                     </div>
                   </div>
                 )}

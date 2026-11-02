@@ -8,8 +8,10 @@ const {
   decodeTCPHeader,
   decodeUserData72,
 } = require('zklib-js/utils');
-const { getStoredEvents, addStoredEvents } = require('./eventStore');
+const { addStoredEvents } = require('./eventStore');
 const { getEmployeeOverrides, saveEmployees, getEmployees } = require('./db');
+const { db } = require('./sqlite');
+const { getSavedAttendance, recordSyncSuccess } = require('./attendanceStore');
 
 loadEnvFile();
 
@@ -176,22 +178,17 @@ async function readAttendanceSnapshot(deviceConfig) {
     const usersResult = await readUsersCompatible(device);
     const attendanceResult = await readAttendancesCompatible(device);
 
-    saveEmployees(config.id, normalizeEmployees(usersResult?.data || [], config.id));
-    const employees = getEmployees(config.id);
-    const employeeIndex = buildEmployeeIndex(employees);
-    const pulledEvents = normalizeEvents(attendanceResult?.data || [], employeeIndex);
-    addStoredEvents(config.id, pulledEvents, 'device');
-    const storedEvents = normalizeStoredEvents(getStoredEvents(config.id), employeeIndex);
-    const events = [...pulledEvents, ...storedEvents];
-    const uniqueEvents = filterDuplicatePunches(events);
-
-    return {
-      device: config,
-      deviceInfo,
-      fetchedAt: new Date().toISOString(),
-      employees,
-      events: uniqueEvents.map(event => ({ ...event, deviceId: config.id, id: `${config.id}:${event.id}` })),
-    };
+    if (usersResult?.err || attendanceResult?.err) throw (usersResult?.err || attendanceResult?.err);
+    if (!attendanceResult?.data?.length && Number(deviceInfo?.logCounts) > 0) throw new Error('El equipo reporta registros pero no entrego el historial.');
+    return db.transaction(() => {
+      saveEmployees(config.id, normalizeEmployees(usersResult?.data || [], config.id));
+      const employees = getEmployees(config.id);
+      const employeeIndex = buildEmployeeIndex(employees);
+      const pulledEvents = normalizeEvents(attendanceResult?.data || [], employeeIndex);
+      addStoredEvents(config.id, pulledEvents, 'device');
+      recordSyncSuccess(config.id, deviceInfo);
+      return getSavedAttendance(config);
+    })();
   });
 }
 
@@ -226,20 +223,24 @@ function normalizeStoredEvents(records, employeeIndex) {
 async function readUsersCompatible(device) {
   const standardResult = await safeRead(() => device.getUsers());
   if (standardResult?.data?.length || device.connectionType !== 'tcp') {
+    if (!standardResult) throw new Error('No se pudo descargar el listado de empleados.');
     return standardResult || { data: [] };
   }
 
   const fallbackResult = await safeRead(() => readTcpUsers(device.zklibTcp));
+  if (!standardResult && !fallbackResult) throw new Error('No se pudo descargar el listado de empleados.');
   return fallbackResult?.data?.length ? fallbackResult : (standardResult || { data: [] });
 }
 
 async function readAttendancesCompatible(device) {
   const standardResult = await safeRead(() => device.getAttendances());
   if (standardResult?.data?.length || device.connectionType !== 'tcp') {
+    if (!standardResult) throw new Error('No se pudo descargar el historial de asistencias.');
     return standardResult || { data: [] };
   }
 
   const fallbackResult = await safeRead(() => readTcpAttendances(device.zklibTcp));
+  if (!standardResult && !fallbackResult) throw new Error('No se pudo descargar el historial de asistencias.');
   return fallbackResult?.data?.length ? fallbackResult : (standardResult || { data: [] });
 }
 

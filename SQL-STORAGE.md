@@ -15,7 +15,15 @@ Los ajustes particulares del dispositivo y las credenciales protegidas se guarda
 
 Las consultas de asistencia, importaciones, edicion de nombres y PDF deben indicar deviceId. Los operadores solo acceden a los dispositivos asignados. Un empleado con el mismo numero en dos dispositivos es tratado como dos registros independientes.
 
-## Migracion
+## Consulta y sincronizacion
+
+GET /api/events y GET /api/employees leen exclusivamente SQLite. El filtro de periodo y empleado se aplica en SQL por deviceId; las consultas y los PDF no abren conexion al reloj. El historial permanece consultable aunque el equipo este desconectado.
+
+POST /api/device/sync?deviceId=... es la operacion explicita para descargar empleados y marcaciones. Requiere acceso al dispositivo y mantiene una sola descarga en curso por reloj. Los datos se guardan en una transaccion y luego se vuelve a consultar SQLite. Un fallo no borra el historial ni cambia la fecha de ultimo exito.
+
+device_sync_status conserva el ultimo intento, ultimo exito, ultimo error y la informacion obtenida en la descarga. fetchedAt ahora indica la ultima sincronizacion exitosa, no el momento de cada consulta. Para datos anteriores sin fecha fiable se devuelve null hasta la siguiente sincronizacion exitosa.
+
+## Migracion de archivos anteriores
 
 En el primer arranque se respaldan los archivos JSON/DB antiguos en server/data/pre-sqlite-* y se importan dentro de una unica transaccion. Un error aborta la migracion. Las claves existentes se conservan; los nuevos usuarios usan scrypt. No se modifica el reloj.
 
@@ -35,6 +43,6 @@ Instalar dependencias con npm ci (o npm ci --omit=dev en el servidor). better-sq
 
 Las horas extra se calculan por empleado y jornada desde la salida programada. Cada hora se reconoce al alcanzar 50 minutos: 49 minutos generan cero, 50 generan una hora, 109 generan una y 110 generan dos. Los sobrantes no se trasladan a otros dias ni empleados: 20 minutos un dia y 40 al siguiente no generan horas extra. La tolerancia sigue aplicando solamente a la entrada. Este resultado es calculado; las marcaciones originales no se alteran.
 
-node --test server/sqlite-isolation.test.js server/source-attendance.test.js
+node --test server/sqlite-isolation.test.js server/source-attendance.test.js server/cached-attendance.test.js
 
 Las pruebas usan datos temporales y no conectan al reloj. Comprueban migracion, IDs repetidos, permisos, nombres, horarios, deduplicacion, reapertura y conservacion de historial.

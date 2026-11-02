@@ -41,6 +41,11 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS migration_issues (
     id INTEGER PRIMARY KEY, reason TEXT NOT NULL, payload TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS device_sync_status (
+    device_id TEXT PRIMARY KEY REFERENCES devices(id),
+    last_success TEXT, last_attempt TEXT, last_error TEXT,
+    device_info TEXT CHECK(device_info IS NULL OR json_valid(device_info))
+  );
 `);
 
 function legacy(name, fallback) {
@@ -131,4 +136,5 @@ if (!db.prepare('SELECT 1 FROM migrations WHERE version=1').get()) {
     db.prepare('INSERT INTO migrations VALUES (1,?)').run(new Date().toISOString());
   })();
 }
+db.prepare('INSERT OR IGNORE INTO migrations(version,applied_at) VALUES (2,?)').run(new Date().toISOString());
 module.exports = { db, dataDir, employee, insertEvent };

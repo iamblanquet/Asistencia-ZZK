@@ -1,12 +1,18 @@
 const { db, insertEvent } = require('./sqlite');
 
-function getStoredEvents(deviceId) {
+function getStoredEvents(deviceId, filters = {}) {
   if (!deviceId) throw new Error('Biometrico requerido.');
   return db.prepare(`SELECT e.device_id AS deviceId,e.employee_id AS employeeId,
     COALESCE(p.override_name,p.name) AS employeeName,e.timestamp,e.local_date AS localDate,
     e.local_time AS localTime,e.source,e.device_user_id AS deviceUserId,e.uid
     FROM events e JOIN employees p ON p.device_id=e.device_id AND p.employee_id=e.employee_id
-    WHERE e.device_id=? ORDER BY e.timestamp`).all(String(deviceId));
+    WHERE e.device_id=?
+    AND (? IS NULL OR e.local_date>=?) AND (? IS NULL OR e.local_date<=?)
+    AND (? IS NULL OR e.employee_id=?)
+    ORDER BY e.timestamp`).all(String(deviceId), filters.from || null, filters.from || null,
+      filters.to || null, filters.to || null,
+      filters.employeeId && filters.employeeId !== 'all' ? String(filters.employeeId) : null,
+      filters.employeeId && filters.employeeId !== 'all' ? String(filters.employeeId) : null);
 }
 
 function addStoredEvents(deviceId, events, source = 'manual') {

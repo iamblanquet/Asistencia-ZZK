@@ -4,8 +4,6 @@ const {
   getDeviceConfig,
   readDeviceDiagnostics,
   readDeviceStatus,
-  readAttendanceSnapshot,
-  filterEvents,
 } = require('./services/zkteco');
 const {
   getDevices,
@@ -16,6 +14,8 @@ const {
   updateEmployeeName,
 } = require('./services/db');
 const { addStoredEvents, parseAttendanceFile } = require('./services/eventStore');
+const { getSavedAttendance } = require('./services/attendanceStore');
+const { syncAttendance } = require('./services/syncAttendance');
 const { getRealtimeStatus, startRealtime, stopRealtime } = require('./services/realtime');
 const {
   authenticate,
@@ -318,11 +318,13 @@ app.get('/api/employees', async (req, res, next) => {
     if (!device) {
       return res.status(404).json({ ok: false, message: 'Dispositivo no encontrado o acceso denegado.' });
     }
-    const snapshot = await readAttendanceSnapshot(device);
+    const snapshot = getSavedAttendance(device);
     res.json({
       device: snapshot.device,
       fetchedAt: snapshot.fetchedAt,
       employees: snapshot.employees,
+      source: snapshot.source,
+      sync: snapshot.sync,
     });
   } catch (error) {
     next(error);
@@ -336,17 +338,19 @@ app.get('/api/events', async (req, res, next) => {
     if (!device) {
       return res.status(404).json({ ok: false, message: 'Dispositivo no encontrado o acceso denegado.' });
     }
-    const snapshot = await readAttendanceSnapshot(device);
-    const events = filterEvents(snapshot.events, {
+    const snapshot = getSavedAttendance(device, {
       from: req.query.from,
       to: req.query.to,
       employeeId: req.query.employeeId,
     });
+    const events = snapshot.events;
 
     res.json({
       device: snapshot.device,
       deviceInfo: snapshot.deviceInfo,
       fetchedAt: snapshot.fetchedAt,
+      sync: snapshot.sync,
+      source: snapshot.source,
       range: {
         from: req.query.from || null,
         to: req.query.to || null,
@@ -361,6 +365,17 @@ app.get('/api/events', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+// Only this explicit operation downloads attendance from the biometric device.
+app.post('/api/device/sync', async (req, res, next) => {
+  const device = getRequestDevice(req);
+  if (!device) return res.status(404).json({ message: 'Dispositivo no encontrado o acceso denegado.' });
+  try {
+    const snapshot = await syncAttendance(device);
+    res.json({ ok: true, device: snapshot.device, fetchedAt: snapshot.fetchedAt, sync: snapshot.sync,
+      totals: { employees: snapshot.employees.length, events: snapshot.events.length } });
+  } catch (error) { next(error); }
 });
 
 // Serve static client assets in production
