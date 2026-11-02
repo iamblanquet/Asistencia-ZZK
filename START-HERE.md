@@ -1,27 +1,32 @@
-# Version recuperada
+# Asistencia ZKTeco con SQLite
 
-Esta copia contiene la interfaz compilada en dist y la API reconstruida en server. El codigo fuente original de la interfaz (src) falta; npm run build no esta disponible hasta recuperarlo. La administracion de usuarios adicionales aun no esta reconstruida.
+Esta version incluye el codigo fuente React, la interfaz compilada y la API Node. Usuarios, dispositivos, empleados, permisos y marcaciones se guardan en SQLite, con separacion por biometrico.
 
-## Arranque local (PowerShell, Node.js 20+)
+## Arranque (Node.js 20+)
 
 ```powershell
-npm ci --prefix server --ignore-scripts
+npm ci
+npm run build
 $env:INITIAL_ADMIN_PASSWORD = 'REEMPLAZAR-POR-UNA-CLAVE-UNICA'
 npm start
 ```
 
-Abrir http://127.0.0.1:5175/. Usuario inicial: admin. La clave debe tener al menos 12 caracteres y solo se usa para crear el acceso en el primer arranque. No hay una contrasena incluida en el repositorio.
+La clave inicial debe tener al menos 12 caracteres. Solo se utiliza si no hay usuarios ni archivos anteriores para migrar. El usuario inicial es admin. No hay una clave de acceso incluida en el repositorio.
 
-server/data contiene credenciales con hash y datos privados del equipo. Esta excluido de Git: conservarlo en respaldos privados. Las sesiones duran ocho horas y se invalidan al reiniciar.
+Para produccion con dist ya compilado, instalar con npm ci --omit=dev. No usar --ignore-scripts: better-sqlite3 necesita instalar su binario nativo.
 
-Configurar la IP y horarios desde el portal. La API lee usuarios y registros sin cambiar la configuracion del reloj. La descarga depende de la red y de lo que exponga el firmware ZK.
+La API usa API_PORT (5174 por defecto) y HOST (127.0.0.1 por defecto). En el servidor, deploy/asistencia-zzk.service configura el puerto 5175 y la zona horaria America/Mexico_City. El proxy HTTPS sirve https://asisto.itzamna.mx.
 
-La tolerancia solo aplica a la entrada. Las horas extra cuentan desde la salida programada. Una unica marcacion queda como jornada incompleta.
+## Datos
 
-## Pruebas
+El archivo principal es server/data/asistencia.sqlite. Esta carpeta es privada y esta excluida de Git. La primera ejecucion migra los JSON antiguos automaticamente, con respaldo y transaccion. No borrar la base para actualizar.
+
+Consultar [SQL-STORAGE.md](SQL-STORAGE.md) para relaciones entre tablas, migracion, respaldos, casos ambiguos y recuperacion.
+
+## Verificacion
 
 ```powershell
-node --test server/attendance-calculation.test.js
+node --test server/sqlite-isolation.test.js server/source-attendance.test.js
 ```
 
-Dockerfile y docker-compose.yml pertenecen al proyecto anterior y requieren recuperar src antes de poder usarse. Usar el arranque local descrito arriba para esta copia.
+Los scripts de reparacion de bundles compilados corresponden a la copia recuperada anterior. Para cambios nuevos editar src y ejecutar npm run build.

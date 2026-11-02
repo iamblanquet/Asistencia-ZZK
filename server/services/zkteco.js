@@ -8,8 +8,8 @@ const {
   decodeTCPHeader,
   decodeUserData72,
 } = require('zklib-js/utils');
-const { getStoredEvents } = require('./eventStore');
-const { getEmployeeOverrides } = require('./db');
+const { getStoredEvents, addStoredEvents } = require('./eventStore');
+const { getEmployeeOverrides, saveEmployees, getEmployees } = require('./db');
 
 loadEnvFile();
 
@@ -176,9 +176,11 @@ async function readAttendanceSnapshot(deviceConfig) {
     const usersResult = await readUsersCompatible(device);
     const attendanceResult = await readAttendancesCompatible(device);
 
-    const employees = normalizeEmployees(usersResult?.data || []);
+    saveEmployees(config.id, normalizeEmployees(usersResult?.data || [], config.id));
+    const employees = getEmployees(config.id);
     const employeeIndex = buildEmployeeIndex(employees);
     const pulledEvents = normalizeEvents(attendanceResult?.data || [], employeeIndex);
+    addStoredEvents(config.id, pulledEvents, 'device');
     const storedEvents = normalizeStoredEvents(getStoredEvents(config.id), employeeIndex);
     const events = [...pulledEvents, ...storedEvents];
     const uniqueEvents = filterDuplicatePunches(events);
@@ -188,7 +190,7 @@ async function readAttendanceSnapshot(deviceConfig) {
       deviceInfo,
       fetchedAt: new Date().toISOString(),
       employees,
-      events: uniqueEvents,
+      events: uniqueEvents.map(event => ({ ...event, deviceId: config.id, id: `${config.id}:${event.id}` })),
     };
   });
 }
@@ -379,8 +381,8 @@ async function safeRead(read) {
   }
 }
 
-function normalizeEmployees(users) {
-  const overrides = getEmployeeOverrides();
+function normalizeEmployees(users, deviceId) {
+  const overrides = getEmployeeOverrides(deviceId);
   return users
     .map((user) => {
       const uid = cleanValue(user.uid);

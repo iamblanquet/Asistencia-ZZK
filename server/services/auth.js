@@ -1,194 +1,69 @@
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-
-const dbDir = path.join(__dirname, '../data');
-const usersPath = path.join(dbDir, 'users.db');
-
+const crypto = require('node:crypto');
+const { db } = require('./sqlite');
 const sessions = new Map();
-
-function hashPassword(password) {
-  return crypto.createHash('sha256').update(password).digest('hex');
-}
-
-function initAuthDb() {
-  if (!fs.existsSync(dbDir)) {
-    fs.mkdirSync(dbDir, { recursive: true });
-  }
-
-  if (!fs.existsSync(usersPath)) {
-    const defaultUsers = [
-      {
-        id: 'usr-admin',
-        username: 'admin',
-        password: hashPassword('admin123'),
-        role: 'admin',
-        assignedDevices: [] // Admin has access to all devices
-      }
-    ];
-    fs.writeFileSync(usersPath, JSON.stringify(defaultUsers, null, 2), 'utf8');
-  }
-}
-
 function getUsers() {
-  initAuthDb();
-  try {
-    const content = fs.readFileSync(usersPath, 'utf8');
-    return JSON.parse(content) || [];
-  } catch (error) {
-    console.error('Error reading users.db:', error);
-    return [];
-  }
+  return db.prepare('SELECT * FROM users ORDER BY rowid').all().map(row => ({ id: row.id, username: row.username, role: row.role,
+    ...JSON.parse(row.credentials), assignedDevices: db.prepare('SELECT device_id FROM user_devices WHERE user_id=?').all(row.id).map(d => d.device_id) }));
 }
-
-function saveUsers(users) {
-  initAuthDb();
-  try {
-    fs.writeFileSync(usersPath, JSON.stringify(users, null, 2), 'utf8');
-    return true;
-  } catch (error) {
-    console.error('Error writing to users.db:', error);
-    return false;
-  }
+function profile(user) { return { id: user.id, username: user.username, role: user.role, assignedDevices: user.assignedDevices }; }
+function passwordHash(password) {
+  if (typeof password !== 'string' || password.length < 8) throw new Error('La contrasena requiere al menos 8 caracteres.');
+  const salt = crypto.randomBytes(16).toString('hex');
+  return { salt, hash: crypto.scryptSync(password, salt, 64).toString('hex') };
 }
-
 function authenticate(username, password) {
-  const users = getUsers();
-  const cleanUsername = String(username || '').trim().toLowerCase();
-  const user = users.find(u => u.username.toLowerCase() === cleanUsername);
-  
-  if (!user) return null;
-  
-  const hashed = hashPassword(password);
-  if (user.password !== hashed) return null;
-  
-  // Create secure session token
-  const token = crypto.randomBytes(24).toString('hex');
-  const userSessionProfile = {
-    id: user.id,
-    username: user.username,
-    role: user.role,
-    assignedDevices: user.assignedDevices || []
-  };
-  
-  sessions.set(token, userSessionProfile);
-  return { token, user: userSessionProfile };
+  const user = getUsers().find(u => u.username.toLowerCase() === String(username || '').trim().toLowerCase());
+  if (!user || typeof password !== 'string') return null;
+  const actual = user.salt ? crypto.scryptSync(password, user.salt, 64) : crypto.createHash('sha256').update(password).digest();
+  const expected = Buffer.from(user.hash || user.password, 'hex');
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
+  const token = crypto.randomBytes(32).toString('hex');
+  sessions.set(token, { userId: user.id, expires: Date.now() + 8 * 60 * 60 * 1000 });
+  return { token, user: profile(user) };
 }
-
 function getSession(token) {
-  if (!token) return null;
-  return sessions.get(token) || null;
+  const session = sessions.get(token);
+  if (!session || session.expires < Date.now()) { sessions.delete(token); return null; }
+  const user = getUsers().find(u => u.id === session.userId);
+  return user ? profile(user) : null;
 }
-
-function removeSession(token) {
-  if (!token) return false;
-  return sessions.delete(token);
-}
-
-function createUser(userData) {
-  const users = getUsers();
-  const username = String(userData.username || '').trim();
-  
-  // Check duplicate username
-  const exists = users.some(u => u.username.toLowerCase() === username.toLowerCase());
-  if (exists) {
-    throw new Error('El nombre de usuario ya existe.');
+function removeSession(token) { return sessions.delete(token); }
+function assignments(userId, devices) {
+  if (!Array.isArray(devices)) throw new Error('Lista de biometricos no valida.');
+  db.prepare('DELETE FROM user_devices WHERE user_id=?').run(userId);
+  for (const id of new Set(devices.map(String))) {
+    if (!db.prepare('SELECT 1 FROM devices WHERE id=? AND deleted_at IS NULL').get(id)) throw new Error('Biometrico asignado no encontrado.');
+    db.prepare('INSERT INTO user_devices VALUES (?,?)').run(userId, id);
   }
-  
-  const newUser = {
-    id: `usr-${Date.now()}`,
-    username,
-    password: hashPassword(userData.password || '123456'),
-    role: userData.role === 'admin' ? 'admin' : 'user',
-    assignedDevices: Array.isArray(userData.assignedDevices) ? userData.assignedDevices : []
-  };
-  
-  users.push(newUser);
-  saveUsers(users);
-  
-  return {
-    id: newUser.id,
-    username: newUser.username,
-    role: newUser.role,
-    assignedDevices: newUser.assignedDevices
-  };
 }
-
+function createUser(data) {
+  const username = String(data.username || '').trim();
+  if (!username) throw new Error('Usuario requerido.');
+  const id = 'usr-' + crypto.randomUUID();
+  db.transaction(() => {
+    db.prepare('INSERT INTO users(id,username,role,credentials) VALUES (?,?,?,?)').run(id, username, data.role === 'admin' ? 'admin' : 'user', JSON.stringify(passwordHash(data.password)));
+    assignments(id, data.assignedDevices || []);
+  })();
+  return profile(getUsers().find(u => u.id === id));
+}
 function updateUser(id, data) {
-  const users = getUsers();
-  const index = users.findIndex(u => String(u.id) === String(id));
-  if (index === -1) {
-    throw new Error('Usuario no encontrado.');
-  }
-  
-  // Check unique username if username is changing
-  if (data.username && data.username.toLowerCase() !== users[index].username.toLowerCase()) {
-    const exists = users.some(u => u.username.toLowerCase() === data.username.toLowerCase());
-    if (exists) {
-      throw new Error('El nombre de usuario ya existe.');
-    }
-    users[index].username = String(data.username).trim();
-  }
-  
-  if (data.password) {
-    users[index].password = hashPassword(data.password);
-  }
-  
-  if (data.role) {
-    users[index].role = data.role === 'admin' ? 'admin' : 'user';
-  }
-  
-  if (Array.isArray(data.assignedDevices)) {
-    users[index].assignedDevices = data.assignedDevices;
-  }
-  
-  saveUsers(users);
-  
-  // Update active sessions if the user is logged in
-  for (const [token, sessionUser] of sessions.entries()) {
-    if (String(sessionUser.id) === String(id)) {
-      sessions.set(token, {
-        id: users[index].id,
-        username: users[index].username,
-        role: users[index].role,
-        assignedDevices: users[index].assignedDevices
-      });
-    }
-  }
-  
-  return {
-    id: users[index].id,
-    username: users[index].username,
-    role: users[index].role,
-    assignedDevices: users[index].assignedDevices
-  };
+  const user = getUsers().find(u => u.id === id);
+  if (!user) throw new Error('Usuario no encontrado.');
+  if (id === 'usr-admin' && data.role && data.role !== 'admin') throw new Error('El administrador principal debe conservar su rol.');
+  const username = data.username === undefined ? user.username : String(data.username).trim();
+  if (!username) throw new Error('Usuario requerido.');
+  db.transaction(() => {
+    const credentials = data.password ? passwordHash(data.password) : { password: user.password, salt: user.salt, hash: user.hash };
+    db.prepare('UPDATE users SET username=?,role=?,credentials=? WHERE id=?').run(username, data.role ? (data.role === 'admin' ? 'admin' : 'user') : user.role, JSON.stringify(credentials), id);
+    if (data.assignedDevices !== undefined) assignments(id, data.assignedDevices);
+  })();
+  if (data.password) for (const [token, session] of sessions) if (session.userId === id) sessions.delete(token);
+  return profile(getUsers().find(u => u.id === id));
 }
-
 function deleteUser(id) {
-  if (id === 'usr-admin') {
-    throw new Error('No se puede eliminar el usuario administrador por defecto.');
-  }
-  
-  const users = getUsers();
-  const filtered = users.filter(u => String(u.id) !== String(id));
-  saveUsers(filtered);
-  
-  // Clear any active sessions for deleted user
-  for (const [token, sessionUser] of sessions.entries()) {
-    if (String(sessionUser.id) === String(id)) {
-      sessions.delete(token);
-    }
-  }
-  
+  if (id === 'usr-admin') throw new Error('No se puede eliminar el administrador principal.');
+  db.prepare('DELETE FROM users WHERE id=?').run(id);
+  for (const [token, session] of sessions) if (session.userId === id) sessions.delete(token);
   return true;
 }
-
-module.exports = {
-  authenticate,
-  getSession,
-  removeSession,
-  getUsers,
-  createUser,
-  updateUser,
-  deleteUser
-};
+module.exports = { authenticate, getSession, removeSession, getUsers, createUser, updateUser, deleteUser };

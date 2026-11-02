@@ -61,6 +61,11 @@ function authMiddleware(req, res, next) {
   }
 
   req.user = user;
+  const requiresDevice = path.startsWith('/api/events') || path.startsWith('/api/employees') || path.startsWith('/api/device/');
+  const newDeviceDiagnostic = path === '/api/device/diagnostics' && user.role === 'admin';
+  if (requiresDevice && !req.query.deviceId && !newDeviceDiagnostic) {
+    return res.status(400).json({ message: 'Seleccione el biometrico.' });
+  }
   next();
 }
 
@@ -220,11 +225,14 @@ app.delete('/api/devices/:id', requireAdmin, (req, res) => {
 });
 
 app.put('/api/employees/:id', (req, res) => {
+  if (!req.query.deviceId) return res.status(400).json({ message: 'Seleccione el biometrico.' });
+  const device = getRequestDevice(req);
+  if (!device) return res.status(403).json({ message: 'Biometrico no autorizado.' });
   const { name } = req.body;
   if (!name) {
     return res.status(400).json({ ok: false, message: 'El nombre es requerido.' });
   }
-  const updated = updateEmployeeName(req.params.id, name);
+  const updated = updateEmployeeName(device.id, req.params.id, name);
   res.json({ ok: true, employee: updated });
 });
 
@@ -243,6 +251,9 @@ app.get('/api/device/status', async (req, res, next) => {
 
 app.get('/api/device/diagnostics', async (req, res) => {
   let device = getRequestDevice(req);
+  if (req.user.role !== 'admin' && (!device || (req.query.ip && req.query.ip !== device.ip) || (req.query.port && Number(req.query.port) !== device.port))) {
+    return res.status(403).json({ message: 'Biometrico no autorizado.' });
+  }
   if (!device) {
     device = {};
   }
@@ -302,6 +313,7 @@ app.post('/api/events/import', (req, res) => {
 
 app.get('/api/employees', async (req, res, next) => {
   try {
+    if (!req.query.deviceId) return res.status(400).json({ message: 'Seleccione el biometrico.' });
     const device = getRequestDevice(req);
     if (!device) {
       return res.status(404).json({ ok: false, message: 'Dispositivo no encontrado o acceso denegado.' });
@@ -319,6 +331,7 @@ app.get('/api/employees', async (req, res, next) => {
 
 app.get('/api/events', async (req, res, next) => {
   try {
+    if (!req.query.deviceId) return res.status(400).json({ message: 'Seleccione el biometrico.' });
     const device = getRequestDevice(req);
     if (!device) {
       return res.status(404).json({ ok: false, message: 'Dispositivo no encontrado o acceso denegado.' });
@@ -373,6 +386,8 @@ app.use((error, req, res, _next) => {
   });
 });
 
-app.listen(port, () => {
+if (require.main === module) app.listen(port, process.env.HOST || '127.0.0.1', () => {
   console.log(`API ZKTeco lista en http://127.0.0.1:${port}`);
 });
+
+module.exports = app;

@@ -154,7 +154,7 @@ function calculateDay(day, settings) {
     : 0;
   const scheduledMinutes = Math.max(0, minutesBetween(scheduledStart, scheduledEnd));
   const lateMinutes = firstPunch ? Math.max(0, minutesBetween(scheduledStart, firstPunch)) : 0;
-  const isLate = lateMinutes > graceMinutes;
+  const isLate = hasPair && lateMinutes > graceMinutes;
   const overtimeMinutes = hasPair ? Math.max(0, minutesBetween(scheduledEnd, lastPunch)) : 0;
   const earlyLeaveMinutes = hasPair ? Math.max(0, minutesBetween(lastPunch, scheduledEnd)) : 0;
   const isEarlyLeave = earlyLeaveMinutes > 0;

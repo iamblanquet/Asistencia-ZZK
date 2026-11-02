@@ -1,60 +1,27 @@
-const fs = require('fs');
-const path = require('path');
-
-const dataDir = path.join(__dirname, '../data');
-const eventsPath = path.join(dataDir, 'events.db');
-
-function initStore() {
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  if (!fs.existsSync(eventsPath)) {
-    fs.writeFileSync(eventsPath, '[]\n', 'utf8');
-  }
-}
-
-function getAllEvents() {
-  initStore();
-  try {
-    return JSON.parse(fs.readFileSync(eventsPath, 'utf8')) || [];
-  } catch (error) {
-    console.error('Error reading events.db:', error);
-    return [];
-  }
-}
-
-function saveAllEvents(events) {
-  initStore();
-  fs.writeFileSync(eventsPath, JSON.stringify(events, null, 2), 'utf8');
-}
+const { db, insertEvent } = require('./sqlite');
 
 function getStoredEvents(deviceId) {
-  return getAllEvents().filter((event) => String(event.deviceId) === String(deviceId));
+  if (!deviceId) throw new Error('Biometrico requerido.');
+  return db.prepare(`SELECT e.device_id AS deviceId,e.employee_id AS employeeId,
+    COALESCE(p.override_name,p.name) AS employeeName,e.timestamp,e.local_date AS localDate,
+    e.local_time AS localTime,e.source,e.device_user_id AS deviceUserId,e.uid
+    FROM events e JOIN employees p ON p.device_id=e.device_id AND p.employee_id=e.employee_id
+    WHERE e.device_id=? ORDER BY e.timestamp`).all(String(deviceId));
 }
 
 function addStoredEvents(deviceId, events, source = 'manual') {
-  const current = getAllEvents();
-  const seen = new Set(current.map(eventKey));
+  if (!deviceId) throw new Error('Biometrico requerido.');
   const inserted = [];
-
+  db.transaction(() => {
   for (const event of events) {
     const normalized = normalizeStoredEvent(deviceId, event, source);
     if (!normalized) {
       continue;
     }
-    const key = eventKey(normalized);
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    current.push(normalized);
-    inserted.push(normalized);
+    if (insertEvent(String(deviceId), normalized, source)) inserted.push(normalized);
   }
 
-  if (inserted.length) {
-    current.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    saveAllEvents(current);
-  }
+  })();
 
   return inserted;
 }

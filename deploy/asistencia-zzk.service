@@ -1,0 +1,21 @@
+[Unit]
+Description=Asistencia ZKTeco portal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Asistencia-ZZK
+Environment=NODE_ENV=production
+Environment=TZ=America/Mexico_City
+Environment=HOST=10.255.0.1
+Environment=API_PORT=5175
+ExecStart=/usr/bin/node server/index.js
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

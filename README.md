@@ -1,5 +1,7 @@
 # Asistencia ZKTeco
 
+> Version actual: almacenamiento SQLite por biometrico. Consultar [START-HERE.md](START-HERE.md) para instalacion y [SQL-STORAGE.md](SQL-STORAGE.md) para migracion y respaldos. Las secciones siguientes describen el funcionamiento original del lector.
+
 Proyecto React + Node para leer usuarios y eventos de asistencia de lectores ZKTeco compatibles con el protocolo local ZK, incluyendo WL20/EWL20 cuando el equipo permite conexion PC por Wi-Fi/red.
 
 ## Requisitos

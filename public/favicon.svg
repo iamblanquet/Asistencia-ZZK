@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#232830" />
+      <stop offset="100%" stop-color="#1B1F24" />
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="26" fill="url(#bgGrad)" />
+  <!-- Letra A principal blanca -->
+  <path d="M53.5 22 H66.5 L100 95 H85.5 L60 38.5 L34.5 95 H20 L53.5 22 Z" fill="#FFFFFF" />
+  <!-- Trazo interno Naranja ITZ (#FF7A00) -->
+  <path d="M49.5 64 H69.5 L75 76 H55.5 L47 95 H34.5 L49.5 64 Z" fill="#FF7A00" />
+</svg>

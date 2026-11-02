@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CalendarDays,
   Clock,
   Edit,
   FileDown,
+  Lock,
   RefreshCw,
   Search,
+  User,
   Users,
   Wifi,
   WifiOff,
@@ -19,6 +21,17 @@ import {
   Plus,
   Trash2
 } from 'lucide-react';
+import {
+  AsistoIcon,
+  AsistoLogo,
+  IconPersonal,
+  IconAsistencia,
+  IconEntradasSalidas,
+  IconReportes,
+  IconIncidencias,
+  IconConfiguracion,
+  LoginWaveDecoration,
+} from './components/BrandAssets';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
@@ -67,12 +80,12 @@ function getInitials(name) {
 }
 
 const avatarColors = [
-  'linear-gradient(135deg, #3b82f6, #1d4ed8)', // Blue
-  'linear-gradient(135deg, #10b981, #047857)', // Green
-  'linear-gradient(135deg, #8b5cf6, #6d28d9)', // Purple
-  'linear-gradient(135deg, #f59e0b, #b45309)', // Amber
-  'linear-gradient(135deg, #ec4899, #be185d)', // Pink
-  'linear-gradient(135deg, #06b6d4, #0891b2)', // Cyan
+  'linear-gradient(135deg, #FF7A00, #d96600)', // Naranja ITZ
+  'linear-gradient(135deg, #1B1F24, #374151)', // Grafito
+  'linear-gradient(135deg, #6B7280, #4b5563)', // Gris Medio
+  'linear-gradient(135deg, #10b981, #047857)', // Esmeralda
+  'linear-gradient(135deg, #f59e0b, #b45309)', // Ámbar
+  'linear-gradient(135deg, #06b6d4, #0891b2)', // Cian
 ];
 
 function getAvatarBackground(employeeId) {
@@ -83,6 +96,8 @@ function getAvatarBackground(employeeId) {
 }
 
 function App() {
+  const latestLoad = useRef(0);
+  const loadedDeviceId = useRef('');
 
   const [currentUser, setCurrentUser] = useState(() => {
     if (typeof window === 'undefined') return null;
@@ -474,34 +489,35 @@ function App() {
   }, [summaryRows]);
 
   const distributionData = useMemo(() => {
-    let ok = 0, late = 0, early = 0, open = 0;
+    let ok = 0, late = 0, early = 0, open = 0, both = 0;
     summaryRows.forEach(row => {
-       if (row.isEarlyLeave && row.isLate) { late++; early++; }
+       if (row.isIncomplete) open++;
+       else if (row.isEarlyLeave && row.isLate) both++;
        else if (row.isLate) late++;
        else if (row.isEarlyLeave) early++;
-       else if (row.isIncomplete) open++;
        else ok++;
     });
-    const total = ok + late + early + open || 1;
+    const total = ok + late + early + open + both || 1;
     const getPercent = (v) => Math.round((v / total) * 100);
     return [
-      { name: 'A tempo', value: ok, percentage: getPercent(ok), color: '#38ce3c' },
-      { name: 'Retardo', value: late, percentage: getPercent(late), color: '#ff4d6b' },
-      { name: 'S. Temprana', value: early, percentage: getPercent(early), color: '#8e32e9' },
-      { name: 'Incompleto', value: open, percentage: getPercent(open), color: '#ffde73' },
+      { name: 'A tiempo', value: ok, percentage: getPercent(ok), color: '#10b981' },
+      { name: 'Retardo', value: late, percentage: getPercent(late), color: '#FF7A00' },
+      { name: 'S. Temprana', value: early, percentage: getPercent(early), color: '#6B7280' },
+      { name: 'Incompleto', value: open, percentage: getPercent(open), color: '#f59e0b' },
+      { name: 'Retardo + S. temprana', value: both, percentage: getPercent(both), color: '#ef4444' },
     ].filter(d => d.value > 0);
   }, [summaryRows]);
 
   const chartTheme = useMemo(() => ({
-    axis: theme === 'dark' ? '#94a3b8' : '#64748b',
-    grid: theme === 'dark' ? '#1f293d' : '#d8e0ea',
-    tooltipBg: theme === 'dark' ? '#161b2e' : '#ffffff',
-    tooltipBorder: theme === 'dark' ? '#1f293d' : '#d8e0ea',
-    tooltipText: theme === 'dark' ? '#f8fafc' : '#1f2937',
-    workedLine: '#38ce3c',
-    plannedLine: '#8e32e9',
-    lateBar: '#ff4d6b',
-    earlyBar: '#ffde73',
+    axis: theme === 'dark' ? '#9ca3af' : '#6B7280',
+    grid: theme === 'dark' ? '#2a3038' : '#E5E7EB',
+    tooltipBg: theme === 'dark' ? '#1B1F24' : '#ffffff',
+    tooltipBorder: theme === 'dark' ? '#374151' : '#E5E7EB',
+    tooltipText: theme === 'dark' ? '#f9fafb' : '#1B1F24',
+    workedLine: '#FF7A00',
+    plannedLine: theme === 'dark' ? '#9ca3af' : '#1B1F24',
+    lateBar: '#FF7A00',
+    earlyBar: '#6B7280',
   }), [theme]);
 
   async function loadDevices() {
@@ -516,6 +532,18 @@ function App() {
   }
 
   async function loadEvents(customRange = range, deviceId = activeDeviceId) {
+    const requestId = ++latestLoad.current;
+    if (deviceId !== loadedDeviceId.current) {
+      loadedDeviceId.current = deviceId;
+      setEmployees([]);
+      setEvents([]);
+      setDeviceInfo(null);
+      setFetchedAt(null);
+      setSelectedEmployee('all');
+      setEmployeeQuery('');
+      setEditingEmployeeId('');
+      setEmployeesPage(1);
+    }
     setLoading(true);
     setError('');
 
@@ -528,6 +556,8 @@ function App() {
         params.set('deviceId', deviceId);
       }
       const payload = await getJson(`/api/events?${params.toString()}`);
+      if (requestId !== latestLoad.current) return;
+      if (deviceId && payload.device?.id !== deviceId) throw new Error('La respuesta no corresponde al biometrico seleccionado.');
       setEmployees(payload.employees || []);
       setEvents(payload.events || []);
       if (payload.device) {
@@ -544,12 +574,13 @@ function App() {
       setDeviceInfo(payload.deviceInfo || null);
       setFetchedAt(payload.fetchedAt || null);
     } catch (requestError) {
+      if (requestId !== latestLoad.current) return;
       setEmployees([]);
       setEvents([]);
       setDevice(requestError.device || device);
       setError(requestError.message);
     } finally {
-      setLoading(false);
+      if (requestId === latestLoad.current) setLoading(false);
     }
   }
 
@@ -703,15 +734,18 @@ function App() {
   }
 
   async function handleSaveEmployeeName(employeeId) {
+    const deviceId = activeDeviceId;
     const targetName = editingEmployeeName.trim();
     if (!targetName) return;
 
     try {
-      await apiRequest(`/api/employees/${employeeId}`, {
+      if (!deviceId) throw new Error('Seleccione el biometrico.');
+      await apiRequest(`/api/employees/${encodeURIComponent(employeeId)}?deviceId=${encodeURIComponent(deviceId)}`, {
         method: 'PUT',
         body: JSON.stringify({ name: targetName })
       });
       
+      if (loadedDeviceId.current !== deviceId) return;
       // Update local state instantly
       setEmployees(current => current.map(emp => 
         String(emp.employeeId) === String(employeeId) 
@@ -735,23 +769,28 @@ function App() {
   function downloadEmployeeList() {
     const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
     
-    doc.setFillColor(26, 54, 110);
-    doc.rect(0, 0, 612, 8, 'F');
+    // Top bar Grafito + Naranja ITZ
+    doc.setFillColor(27, 31, 36);
+    doc.rect(0, 0, 612, 6, 'F');
+    doc.setFillColor(255, 122, 0);
+    doc.rect(0, 6, 612, 3, 'F');
+
+    drawAsistoPdfBrand(doc, 40, 22);
 
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(16);
-    doc.setTextColor(26, 54, 110);
-    doc.text('DIRECTORIO DE COLABORADORES', 40, 45);
+    doc.setFontSize(14);
+    doc.setTextColor(27, 31, 36);
+    doc.text('DIRECTORIO DE COLABORADORES', 165, 34);
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.setTextColor(100, 116, 139);
+    doc.setTextColor(107, 114, 128);
     const dateStr = new Date().toLocaleString('es-MX');
-    doc.text(`Dispositivo: ${device.name || 'ZKTeco'} (${device.ip})`, 40, 62);
-    doc.text(`Fecha de exportación: ${dateStr}`, 40, 74);
+    doc.text(`Dispositivo: ${device.name || 'ZKTeco'} (${device.ip})`, 165, 48);
+    doc.text(`Fecha de exportación: ${dateStr}`, 165, 60);
 
-    doc.setDrawColor(226, 232, 240);
-    doc.line(40, 85, 572, 85);
+    doc.setDrawColor(229, 231, 235);
+    doc.line(40, 74, 572, 74);
 
     const headers = ['ID', 'Nombre Completo', 'Rol', 'No. Tarjeta'];
     const body = employees.map((emp) => [
@@ -762,12 +801,12 @@ function App() {
     ]);
 
     autoTable(doc, {
-      startY: 105,
+      startY: 90,
       head: [headers],
       body: body,
-      styles: { font: 'helvetica', fontSize: 9, cellPadding: 6 },
-      headStyles: { fillColor: [26, 54, 110], textColor: 255 },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
+      styles: { font: 'helvetica', fontSize: 9, cellPadding: 6, textColor: [27, 31, 36] },
+      headStyles: { fillColor: [27, 31, 36], textColor: 255 },
+      alternateRowStyles: { fillColor: [248, 249, 250] },
       margin: { left: 40, right: 40 },
     });
 
@@ -776,8 +815,8 @@ function App() {
       doc.setPage(i);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
-      doc.setTextColor(148, 163, 184);
-      doc.text(`Pág. ${i} de ${pageCount}`, 306, 765, { align: 'center' });
+      doc.setTextColor(107, 114, 128);
+      doc.text(`ASISTO By ITZ | OIL & GAS  —  Pág. ${i} de ${pageCount}`, 306, 765, { align: 'center' });
     }
 
     doc.save(`directorio-colaboradores-${(device.name || 'biometrico').replace(/\s+/g, '_')}.pdf`);
@@ -791,9 +830,11 @@ function App() {
     const reportFrom = range.from || addDays(reportTo, -14);
 
     try {
+      if (!activeDeviceId) throw new Error('Seleccione el biometrico.');
       const params = new URLSearchParams({
         from: reportFrom,
         to: reportTo,
+        deviceId: activeDeviceId,
       });
 
       if (selectedEmployee !== 'all') {
@@ -838,13 +879,13 @@ function App() {
   if (!currentUser) {
     return (
       <div className="login-page">
+        <LoginWaveDecoration />
         <div className="login-card">
           <div className="login-header">
-            <div className="login-logo">
-              <Wifi size={24} style={{ color: 'var(--primary)' }} />
+            <div className="login-logo-wrap">
+              <AsistoLogo variant={theme === 'dark' ? 'dark' : 'light'} height={68} />
             </div>
-            <h2>Portal de Control</h2>
-            <p>de Asistencias</p>
+            <p className="login-subtitle">Plataforma de control de asistencia</p>
             <span className="secure-badge">Acceso Seguro</span>
           </div>
           
@@ -852,13 +893,13 @@ function App() {
             <div className="form-group">
               <label htmlFor="username">Usuario</label>
               <div className="input-with-icon">
-                <Users size={16} className="input-icon" />
+                <User size={16} className="input-icon" />
                 <input 
                   type="text" 
                   id="username" 
                   value={loginUsername} 
                   onChange={(e) => setLoginUsername(e.target.value)} 
-                  placeholder="Ingrese su usuario"
+                  placeholder="Usuario"
                   required 
                   autoComplete="username"
                 />
@@ -868,13 +909,13 @@ function App() {
             <div className="form-group">
               <label htmlFor="password">Contraseña</label>
               <div className="input-with-icon">
-                <Clock size={16} className="input-icon" />
+                <Lock size={16} className="input-icon" />
                 <input 
                   type="password" 
                   id="password" 
                   value={loginPassword} 
                   onChange={(e) => setLoginPassword(e.target.value)} 
-                  placeholder="••••••••"
+                  placeholder="Contraseña"
                   required 
                   autoComplete="current-password"
                 />
@@ -882,19 +923,19 @@ function App() {
             </div>
             
             {loginError && (
-              <div className="login-error" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '8px', color: '#ff4d6b', fontSize: '0.8rem', marginTop: '12px' }}>
+              <div className="login-error" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '8px', color: '#ef4444', fontSize: '0.8rem', marginTop: '12px' }}>
                 <AlertTriangle size={14} />
                 <span>{loginError}</span>
               </div>
             )}
             
             <button type="submit" className="btn-login" disabled={loggingIn}>
-              {loggingIn ? 'Iniciando Sesión...' : 'Ingresar al Portal'}
+              {loggingIn ? 'Iniciando sesión...' : 'Iniciar sesión'}
             </button>
           </form>
           
           <div className="login-footer">
-            <span>Acceso Protegido - ZKTeco Portal</span>
+            <span>ASISTO By ITZ | OIL &amp; GAS</span>
           </div>
         </div>
       </div>
@@ -913,11 +954,14 @@ function App() {
             aria-label={sidebarCollapsed ? 'Abrir menú lateral' : 'Cerrar menú lateral'}
             title={sidebarCollapsed ? 'Abrir menú lateral' : 'Cerrar menú lateral'}
           >
-            <Menu size={18} />
+            {sidebarCollapsed ? <AsistoIcon size={34} /> : <Menu size={18} />}
           </button>
           <div className="brand-block">
-            <h1>Portal de Control</h1>
-            <p>de Asistencias</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AsistoIcon size={30} style={{ border: '1px solid rgba(255,255,255,0.14)', borderRadius: '7px' }} />
+              <AsistoLogo variant="dark" height={34} />
+            </div>
+            <p>Plataforma de control de asistencia</p>
           </div>
         </div>
 
@@ -948,37 +992,42 @@ function App() {
           <button 
             className={`nav-item ${activeTab === 'general' ? 'active' : ''}`}
             onClick={() => setActiveTab('general')}
+            title="Panel General / Reportes"
           >
-            <LayoutDashboard size={18} />
+            <IconReportes size={19} />
             <span className="nav-label">Panel General</span>
           </button>
           <button 
             className={`nav-item ${activeTab === 'asistencias' ? 'active' : ''}`}
             onClick={() => setActiveTab('asistencias')}
+            title="Asistencia por Rango de Fecha"
           >
-            <CalendarDays size={18} />
-            <span className="nav-label">Rango de Fecha</span>
+            <IconAsistencia size={19} />
+            <span className="nav-label">Asistencia</span>
           </button>
           <button 
             className={`nav-item ${activeTab === 'eventos' ? 'active' : ''}`}
             onClick={() => setActiveTab('eventos')}
+            title="Entradas / Salidas e Historial"
           >
-            <Clock size={18} />
-            <span className="nav-label">Historial Completo</span>
+            <IconEntradasSalidas size={19} />
+            <span className="nav-label">Entradas / Salidas</span>
           </button>
           <button 
             className={`nav-item ${activeTab === 'colaboradores' ? 'active' : ''}`}
             onClick={() => setActiveTab('colaboradores')}
+            title="Personal y Colaboradores"
           >
-            <Users size={18} />
-            <span className="nav-label">Colaboradores</span>
+            <IconPersonal size={19} />
+            <span className="nav-label">Personal</span>
           </button>
           {currentUser && currentUser.role === 'admin' && (
             <button 
               className={`nav-item ${activeTab === 'usuarios' ? 'active' : ''}`}
               onClick={() => setActiveTab('usuarios')}
+              title="Configuración de Usuarios del Portal"
             >
-              <Users size={18} />
+              <IconConfiguracion size={19} />
               <span className="nav-label">Usuarios Portal</span>
             </button>
           )}
@@ -1004,7 +1053,7 @@ function App() {
                   {getInitials(currentUser.username)}
                 </div>
                 <div style={{ display: sidebarCollapsed ? 'none' : 'block' }}>
-                  <div style={{ fontSize: '0.78rem', fontWeight: 'bold', color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '120px' }}>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 'bold', color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '120px' }}>
                     {currentUser.username}
                   </div>
                   <div style={{ fontSize: '0.68rem', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', fontWeight: 600 }}>
@@ -1049,14 +1098,17 @@ function App() {
       {/* Main Content */}
       <div className="main-content">
         <header className="top-header">
-          <h2>{
-            activeTab === 'general' ? 'Panel General' :
-            activeTab === 'asistencias' ? 'Asistencias Diarias' :
-            activeTab === 'eventos' ? 'Bitácora de Eventos' :
-            activeTab === 'colaboradores' ? 'Colaboradores' :
-            activeTab === 'usuarios' ? 'Usuarios Portal' : 'Administrar Biométricos'
-          }</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h2>{
+              activeTab === 'general' ? 'Panel General' :
+              activeTab === 'asistencias' ? 'Asistencia' :
+              activeTab === 'eventos' ? 'Entradas / Salidas' :
+              activeTab === 'colaboradores' ? 'Personal' :
+              activeTab === 'usuarios' ? 'Usuarios Portal' : 'Configuración'
+            }</h2>
+          </div>
           <div className="header-actions">
+            <AsistoLogo variant="dark" height={24} showSubtitle={false} />
             <span className="biometric-indicator">Biométricos</span>
           </div>
         </header>
@@ -1074,8 +1126,11 @@ function App() {
               {/* Row 1: Top Row */}
               <div className="top-row">
                 <div className="card top-summary-card">
-                  <span className="badge-active">Sistema Activo</span>
-                  <h3>Panel de Control de Asistencias</h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+                    <span className="badge-active" style={{ marginBottom: 0 }}>Sistema Activo</span>
+                    <AsistoLogo variant={theme === 'dark' ? 'dark' : 'light'} height={28} />
+                  </div>
+                  <h3>Plataforma de Control de Asistencia</h3>
                   <p className="panel-description">
                     Monitorea de forma centralizada la asistencia, puntualidad y horas extras.
                     Sincroniza datos en tiempo real y descarga reportes PDF listos para el pago
@@ -1106,7 +1161,7 @@ function App() {
                 <div className="card quick-attendance-card top-quick-card">
                   <div className="quick-attendance-head compact">
                     <div>
-                      <span className="section-chip">Consulta Rápida</span>
+                      <span className="section-chip">Reportes</span>
                       <h3>Quincena</h3>
                       <p className="chart-subtitle">PDF consolidado con todos los empleados y datos completos del periodo actual.</p>
                     </div>
@@ -1159,12 +1214,12 @@ function App() {
                 </div>
               </div>
 
-              {/* Row 2: Metrics Row */}
+              {/* Row 2: Metrics Row con Iconografía Oficial ASISTO */}
               <div className="metrics-row">
                 <div className="card metric-card">
                   <div className="metric-header">
-                    <span>EVENTOS DEL PERIODO</span>
-                    <Users size={15} />
+                    <span>ENTRADAS / SALIDAS</span>
+                    <IconEntradasSalidas size={18} />
                   </div>
                   <div className="metric-body">
                     <span className="metric-val">{visibleEvents.length}</span>
@@ -1173,8 +1228,8 @@ function App() {
                 </div>
                 <div className="card metric-card">
                   <div className="metric-header">
-                    <span>COLABORADORES</span>
-                    <Users size={15} />
+                    <span>PERSONAL</span>
+                    <IconPersonal size={18} />
                   </div>
                   <div className="metric-body">
                     <span className="metric-val">{totals.length}</span>
@@ -1183,8 +1238,8 @@ function App() {
                 </div>
                 <div className="card metric-card">
                   <div className="metric-header">
-                    <span>TIEMPO TRABAJADO</span>
-                    <Clock size={15} />
+                    <span>ASISTENCIA</span>
+                    <IconAsistencia size={18} />
                   </div>
                   <div className="metric-body">
                     <span className="metric-val">{durationLabel(totalWorked)}</span>
@@ -1193,18 +1248,18 @@ function App() {
                 </div>
                 <div className="card metric-card warn">
                   <div className="metric-header">
-                    <span>RETARDOS</span>
-                    <AlertTriangle size={15} />
+                    <span>INCIDENCIAS</span>
+                    <IconIncidencias size={18} />
                   </div>
                   <div className="metric-body">
                     <span className="metric-val">{totalLates}</span>
-                    <span className="metric-sub">Total incidencias</span>
+                    <span className="metric-sub">Total retardos</span>
                   </div>
                 </div>
                 <div className="card metric-card accent">
                   <div className="metric-header">
-                    <span>HORAS EXTRA</span>
-                    <Clock size={15} />
+                    <span>REPORTES / EXTRA</span>
+                    <IconReportes size={18} />
                   </div>
                   <div className="metric-body">
                     <span className="metric-val">{durationLabel(totalOvertime)}</span>
@@ -1292,14 +1347,14 @@ function App() {
                           {distributionData.map((d, index) => (
                             <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
                               <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: d.color, flexShrink: 0 }} />
-                              <span style={{ color: theme === 'dark' ? '#94a3b8' : '#64748b' }}>{d.name}:</span>
-                              <span style={{ color: theme === 'dark' ? '#ffffff' : '#1f2937', fontWeight: 'bold' }}>{d.percentage}%</span>
+                              <span style={{ color: theme === 'dark' ? '#9ca3af' : '#6B7280' }}>{d.name}:</span>
+                              <span style={{ color: theme === 'dark' ? '#ffffff' : '#1B1F24', fontWeight: 'bold' }}>{d.percentage}%</span>
                             </div>
                           ))}
                         </div>
                       </>
                     ) : (
-                      <div style={{ color: theme === 'dark' ? '#64748b' : '#64748b', fontSize: '0.85rem' }}>Sin datos suficientes</div>
+                      <div style={{ color: '#6B7280', fontSize: '0.85rem' }}>Sin datos suficientes</div>
                     )}
                   </div>
                 </div>
@@ -1310,27 +1365,27 @@ function App() {
                 <h3 className="modules-section-title">Módulos de la Plataforma</h3>
                 <div className="modules-grid">
                   <div className="card module-card" onClick={() => setActiveTab('asistencias')}>
-                    <div className="module-icon-box">
-                       <CalendarDays size={20} />
+                    <div className="module-icon-box" style={{ color: 'var(--text)' }}>
+                       <IconAsistencia size={22} />
                     </div>
-                    <h4>Asistencias Diarias</h4>
+                    <h4>Asistencia y Reportes</h4>
                     <p>Configure filtros de quincenas, turnos, retardos y descargue planillas formateadas en PDF consolidado o por empleado.</p>
                   </div>
 
                   <div className="card module-card" onClick={() => setActiveTab('eventos')}>
-                    <div className="module-icon-box">
-                       <Clock size={20} />
+                    <div className="module-icon-box" style={{ color: 'var(--text)' }}>
+                       <IconEntradasSalidas size={22} />
                     </div>
-                    <h4>Bitácora de Eventos</h4>
-                    <p>Revise el orden cronológico de marcaciones y lecturas (punches) recolectadas de manera detallada en el biométrico activo.</p>
+                    <h4>Entradas / Salidas</h4>
+                    <p>Revise el orden cronológico de marcaciones y lecturas recolectadas de manera detallada en el biométrico activo.</p>
                   </div>
 
                   {(currentUser?.role === 'admin' || (currentUser?.assignedDevices || []).length > 0) && (
                     <div className="card module-card" onClick={openConfigModal}>
-                      <div className="module-icon-box">
-                        <Settings size={20} />
+                      <div className="module-icon-box" style={{ color: 'var(--text)' }}>
+                        <IconConfiguracion size={22} />
                       </div>
-                      <h4>Administrar Biométricos</h4>
+                      <h4>Configuración de Biométricos</h4>
                       <p>
                         {currentUser?.role === 'admin'
                           ? 'Gestione múltiples relojes biométricos, configure IPs y puertos, y prepare operaciones avanzadas.'
@@ -2194,7 +2249,7 @@ function App() {
                         </div>
 
                         <div className="schedule-day-row tolerance-row">
-                          <div className="day-label">Tolerancia</div>
+                          <div className="day-label">Tolerancia de entrada</div>
                           <div className="time-inputs-group">
                             <div className="numeric-field-wrap">
                               <input
@@ -2351,31 +2406,66 @@ async function getJson(url) {
   return apiRequest(url);
 }
 
+function drawAsistoPdfBrand(doc, x, y) {
+  // Ícono cuadrado redondeado Grafito (#1B1F24)
+  doc.setFillColor(27, 31, 36);
+  doc.roundedRect(x, y, 28, 28, 6, 6, 'F');
+  // Letra A blanca + barra Naranja ITZ (#FF7A00)
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.setTextColor(255, 255, 255);
+  doc.text('A', x + 7.5, y + 20.5);
+  doc.setFillColor(255, 122, 0);
+  doc.rect(x + 11, y + 14.5, 6.5, 2.5, 'F');
+
+  // Wordmark ASISTO By ITZ | OIL & GAS
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.setTextColor(27, 31, 36);
+  doc.text('ASISTO', x + 34, y + 16);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.setTextColor(255, 122, 0);
+  doc.text('By ITZ', x + 34, y + 25);
+  doc.setTextColor(107, 114, 128);
+  doc.text('| OIL & GAS', x + 57, y + 25);
+
+  // Línea divisoria vertical después del logo
+  doc.setDrawColor(229, 231, 235);
+  doc.line(x + 114, y + 2, x + 114, y + 26);
+}
+
 function drawSummaryPage(doc, { totals, range, device }) {
   const generatedAt = new Date();
 
-  // Top accent bar
-  doc.setFillColor(26, 54, 110);
-  doc.rect(0, 0, 792, 8, 'F');
+  // Top accent bar Grafito + Naranja ITZ
+  doc.setFillColor(27, 31, 36);
+  doc.rect(0, 0, 792, 6, 'F');
+  doc.setFillColor(255, 122, 0);
+  doc.rect(0, 6, 792, 3, 'F');
 
-  // Header Left
+  // Brand mark left
+  drawAsistoPdfBrand(doc, 40, 22);
+
+  // Header Title
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
-  doc.setTextColor(26, 54, 110);
-  doc.text('RESUMEN GENERAL DE ASISTENCIA Y NÓMINA', 40, 36);
+  doc.setFontSize(14);
+  doc.setTextColor(27, 31, 36);
+  doc.text('RESUMEN GENERAL DE ASISTENCIA Y NÓMINA', 166, 35);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  doc.setTextColor(71, 85, 105);
-  doc.text('Consolidado general de colaboradores y tiempos acumulados del periodo', 40, 49);
+  doc.setTextColor(107, 114, 128);
+  doc.text('Consolidado general de colaboradores y tiempos acumulados del periodo', 166, 48);
 
   // Header Right
-  doc.setFontSize(9);
-  doc.text(`Generado: ${dateTimeLabel(generatedAt.toISOString())}`, 580, 36);
-  doc.text(`Periodo: ${dateLabel(range.from)} al ${dateLabel(range.to)}`, 580, 49);
+  doc.setFontSize(8.5);
+  doc.text(`Generado: ${dateTimeLabel(generatedAt.toISOString())}`, 580, 35);
+  doc.text(`Periodo: ${dateLabel(range.from)} al ${dateLabel(range.to)}`, 580, 48);
 
   // Divider line
-  doc.setDrawColor(226, 232, 240);
+  doc.setDrawColor(229, 231, 235);
   doc.line(40, 60, 752, 60);
 
   // Compute summary stats
@@ -2390,17 +2480,17 @@ function drawSummaryPage(doc, { totals, range, device }) {
   const cardY = 70;
   const cardGap = 16;
   const cards = [
-    { label: 'COLABORADORES', value: String(totalEmployees), color: [26, 54, 110] },
+    { label: 'PERSONAL REGISTRADO', value: String(totalEmployees), color: [27, 31, 36] },
     { label: 'TIEMPO TOTAL TRAB.', value: durationLabel(totalWorkedMinutes), color: [16, 185, 129] },
-    { label: 'TOTAL RETARDOS', value: `${totalLateCount} incidencias`, color: [239, 68, 68] },
-    { label: 'HORAS EXTRA TOTALES', value: durationLabel(totalOvertimeMinutes), color: [139, 92, 246] },
+    { label: 'TOTAL INCIDENCIAS', value: `${totalLateCount} retardos`, color: [255, 122, 0] },
+    { label: 'HORAS EXTRA TOTALES', value: durationLabel(totalOvertimeMinutes), color: [107, 114, 128] },
   ];
 
   cards.forEach((card, index) => {
     const cardX = 40 + index * (cardWidth + cardGap);
     
     // Draw background rounded rect
-    doc.setFillColor(241, 245, 249);
+    doc.setFillColor(248, 249, 250);
     doc.roundedRect(cardX, cardY, cardWidth, cardHeight, 4, 4, 'F');
 
     // Draw left vertical accent line
@@ -2410,7 +2500,7 @@ function drawSummaryPage(doc, { totals, range, device }) {
     // Print label
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
-    doc.setTextColor(71, 85, 105);
+    doc.setTextColor(107, 114, 128);
     doc.text(card.label, cardX + 12, cardY + 16);
 
     // Print value
@@ -2443,20 +2533,20 @@ function drawSummaryPage(doc, { totals, range, device }) {
     startY: 130,
     head: [tableHeaders],
     body: tableBody,
-    styles: { font: 'helvetica', fontSize: 8, cellPadding: 5 },
-    headStyles: { fillColor: [26, 54, 110], textColor: 255 },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
+    styles: { font: 'helvetica', fontSize: 8, cellPadding: 5, textColor: [27, 31, 36] },
+    headStyles: { fillColor: [27, 31, 36], textColor: 255 },
+    alternateRowStyles: { fillColor: [248, 249, 250] },
     margin: { left: 40, right: 40 },
     didParseCell: function(data) {
       if (data.section === 'body') {
         // Highlight lateCount (column 5) if > 0
         if (data.column.index === 5 && Number(data.cell.raw) > 0) {
-          data.cell.styles.textColor = [239, 68, 68];
+          data.cell.styles.textColor = [255, 122, 0];
           data.cell.styles.fontStyle = 'bold';
         }
         // Highlight incompleteDays (column 9) if > 0
         if (data.column.index === 9 && Number(data.cell.raw) > 0) {
-          data.cell.styles.textColor = [194, 120, 3];
+          data.cell.styles.textColor = [239, 68, 68];
           data.cell.styles.fontStyle = 'bold';
         }
       }
@@ -2467,48 +2557,55 @@ function drawSummaryPage(doc, { totals, range, device }) {
   let signatureY = doc.lastAutoTable.finalY + 30;
   if (signatureY + 50 > 572) {
     doc.addPage();
-    doc.setFillColor(26, 54, 110);
-    doc.rect(0, 0, 792, 8, 'F');
+    doc.setFillColor(27, 31, 36);
+    doc.rect(0, 0, 792, 6, 'F');
+    doc.setFillColor(255, 122, 0);
+    doc.rect(0, 6, 792, 3, 'F');
     signatureY = 60;
   }
 
-  doc.setDrawColor(203, 213, 225);
+  doc.setDrawColor(229, 231, 235);
   doc.line(80, signatureY + 35, 280, signatureY + 35);
   doc.line(512, signatureY + 35, 712, signatureY + 35);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
-  doc.setTextColor(71, 85, 105);
+  doc.setTextColor(107, 114, 128);
   doc.text('Elaborado por (Recursos Humanos)', 180, signatureY + 47, { align: 'center' });
   doc.text('Autorizado por (Gerencia / Nómina)', 612, signatureY + 47, { align: 'center' });
-  doc.text('Reporte consolidado del periodo para procesamiento administrativo.', 396, signatureY + 65, { align: 'center' });
+  doc.text('ASISTO By ITZ | OIL & GAS — Reporte consolidado del periodo para procesamiento administrativo.', 396, signatureY + 65, { align: 'center' });
 }
 
 function drawEmployeePage(doc, { employeeId, employeeName, empRows, empTotal, range, schedule, device }) {
   const generatedAt = new Date();
 
-  // Top accent bar
-  doc.setFillColor(26, 54, 110);
-  doc.rect(0, 0, 792, 8, 'F');
+  // Top accent bar Grafito + Naranja ITZ
+  doc.setFillColor(27, 31, 36);
+  doc.rect(0, 0, 792, 6, 'F');
+  doc.setFillColor(255, 122, 0);
+  doc.rect(0, 6, 792, 3, 'F');
+
+  // Brand mark left
+  drawAsistoPdfBrand(doc, 40, 22);
 
   // Header Left
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
-  doc.setTextColor(26, 54, 110);
-  doc.text('REPORTE DE ASISTENCIA Y PUNTUALIDAD DETALLADO', 40, 36);
+  doc.setFontSize(14);
+  doc.setTextColor(27, 31, 36);
+  doc.text('REPORTE DE ASISTENCIA Y PUNTUALIDAD DETALLADO', 166, 35);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  doc.setTextColor(71, 85, 105);
-  doc.text(`Colaborador: [${employeeId}] - ${employeeName}`, 40, 49);
+  doc.setTextColor(107, 114, 128);
+  doc.text(`Colaborador: [${employeeId}] - ${employeeName}`, 166, 48);
 
   // Header Right
-  doc.setFontSize(9);
-  doc.text(`Generado: ${dateTimeLabel(generatedAt.toISOString())}`, 580, 36);
-  doc.text(`Periodo: ${dateLabel(range.from)} al ${dateLabel(range.to)}`, 580, 49);
+  doc.setFontSize(8.5);
+  doc.text(`Generado: ${dateTimeLabel(generatedAt.toISOString())}`, 580, 35);
+  doc.text(`Periodo: ${dateLabel(range.from)} al ${dateLabel(range.to)}`, 580, 48);
 
   // Divider line
-  doc.setDrawColor(226, 232, 240);
+  doc.setDrawColor(229, 231, 235);
   doc.line(40, 60, 752, 60);
 
   // 1. Period & Device Configuration Metadata Card (from x=40 to x=250, width 220)
@@ -2517,23 +2614,23 @@ function drawEmployeePage(doc, { employeeId, employeeName, empRows, empTotal, ra
   const metaWidth = 220;
   const metaHeight = 52;
 
-  doc.setFillColor(248, 250, 252);
+  doc.setFillColor(248, 249, 250);
   doc.roundedRect(metaX, metaY, metaWidth, metaHeight, 4, 4, 'F');
-  doc.setDrawColor(226, 232, 240);
+  doc.setDrawColor(229, 231, 235);
   doc.roundedRect(metaX, metaY, metaWidth, metaHeight, 4, 4, 'S');
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(7.5);
-  doc.setTextColor(71, 85, 105);
+  doc.setTextColor(27, 31, 36);
   doc.text('CONFIGURACIÓN DEL PERIODO', metaX + 10, metaY + 12);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7);
-  doc.setTextColor(100, 116, 139);
+  doc.setTextColor(107, 114, 128);
   doc.text(`Biométrico IP: ${device.ip}:${device.port}`, metaX + 10, metaY + 23);
   doc.text(`Horario L-V: ${schedule.shiftStart} - ${schedule.shiftEnd}`, metaX + 10, metaY + 32);
   doc.text(`Horario Sáb: ${schedule.satShiftStart || '08:00'} - ${schedule.satShiftEnd || '13:00'}`, metaX + 10, metaY + 41);
-  doc.text(`Tolerancia: ${schedule.graceMinutes} min`, metaX + 120, metaY + 23);
+  doc.text(`Tolerancia entrada: ${schedule.graceMinutes} min`, metaX + 120, metaY + 23);
 
   // 2. Employee KPIs Row (4 cards from x=276 to x=752, each width 110, gap 11)
   const cardWidth = 110;
@@ -2542,16 +2639,16 @@ function drawEmployeePage(doc, { employeeId, employeeName, empRows, empTotal, ra
   const cardGap = 11;
   const employeeCards = [
     { label: 'DÍAS LABORADOS', value: `${empTotal.days} días`, color: [16, 185, 129] },
-    { label: 'HORAS TRABAJADAS', value: durationLabel(empTotal.workedMinutes), color: [26, 54, 110] },
-    { label: 'RETARDOS', value: `${empTotal.lateCount} (${empTotal.lateMinutes} min)`, color: [239, 68, 68] },
-    { label: 'HORAS EXTRA', value: durationLabel(empTotal.overtimeMinutes), color: [139, 92, 246] },
+    { label: 'HORAS TRABAJADAS', value: durationLabel(empTotal.workedMinutes), color: [27, 31, 36] },
+    { label: 'INCIDENCIAS', value: `${empTotal.lateCount} (${empTotal.lateMinutes} min)`, color: [255, 122, 0] },
+    { label: 'HORAS EXTRA', value: durationLabel(empTotal.overtimeMinutes), color: [107, 114, 128] },
   ];
 
   employeeCards.forEach((card, index) => {
     const cardX = 276 + index * (cardWidth + cardGap);
     
     // Draw background rounded rect
-    doc.setFillColor(241, 245, 249);
+    doc.setFillColor(248, 249, 250);
     doc.roundedRect(cardX, cardY, cardWidth, cardHeight, 4, 4, 'F');
 
     // Draw left vertical accent line
@@ -2561,7 +2658,7 @@ function drawEmployeePage(doc, { employeeId, employeeName, empRows, empTotal, ra
     // Print label
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.0);
-    doc.setTextColor(71, 85, 105);
+    doc.setTextColor(107, 114, 128);
     doc.text(card.label, cardX + 10, cardY + 16);
 
     // Print value
@@ -2594,21 +2691,21 @@ function drawEmployeePage(doc, { employeeId, employeeName, empRows, empTotal, ra
     startY: 132,
     head: [tableHeaders],
     body: tableBody,
-    styles: { font: 'helvetica', fontSize: 7.5, cellPadding: 4 },
-    headStyles: { fillColor: [26, 54, 110], textColor: 255 },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
+    styles: { font: 'helvetica', fontSize: 7.5, cellPadding: 4, textColor: [27, 31, 36] },
+    headStyles: { fillColor: [27, 31, 36], textColor: 255 },
+    alternateRowStyles: { fillColor: [248, 249, 250] },
     margin: { left: 40, right: 40 },
     didParseCell: function(data) {
       if (data.section === 'body' && data.column.index === 9) { // index 9 is 'Estado'
         const status = data.cell.raw;
         if (status === 'Retardo') {
-          data.cell.styles.textColor = [239, 68, 68];
+          data.cell.styles.textColor = [255, 122, 0];
           data.cell.styles.fontStyle = 'bold';
         } else if (status === 'Salida Temprana' || status.includes('Temprana')) {
-          data.cell.styles.textColor = [139, 92, 246];
+          data.cell.styles.textColor = [107, 114, 128];
           data.cell.styles.fontStyle = 'bold';
         } else if (status === 'Incompleto') {
-          data.cell.styles.textColor = [194, 120, 3];
+          data.cell.styles.textColor = [239, 68, 68];
           data.cell.styles.fontStyle = 'bold';
         } else if (status === 'A tiempo' || status === 'Ok' || status === 'A tempo') {
           data.cell.styles.textColor = [16, 185, 129];
@@ -2622,21 +2719,23 @@ function drawEmployeePage(doc, { employeeId, employeeName, empRows, empTotal, ra
   let signatureY = doc.lastAutoTable.finalY + 30;
   if (signatureY + 50 > 572) {
     doc.addPage();
-    doc.setFillColor(26, 54, 110);
-    doc.rect(0, 0, 792, 8, 'F');
+    doc.setFillColor(27, 31, 36);
+    doc.rect(0, 0, 792, 6, 'F');
+    doc.setFillColor(255, 122, 0);
+    doc.rect(0, 6, 792, 3, 'F');
     signatureY = 60;
   }
 
-  doc.setDrawColor(203, 213, 225);
+  doc.setDrawColor(229, 231, 235);
   doc.line(80, signatureY + 35, 280, signatureY + 35);
   doc.line(512, signatureY + 35, 712, signatureY + 35);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
-  doc.setTextColor(71, 85, 105);
+  doc.setTextColor(107, 114, 128);
   doc.text('Firma del Colaborador', 180, signatureY + 47, { align: 'center' });
   doc.text('Recursos Humanos / Autorización', 612, signatureY + 47, { align: 'center' });
-  doc.text('Este reporte es un registro oficial de asistencia y tiempos laborados para efectos de nómina.', 396, signatureY + 65, { align: 'center' });
+  doc.text('ASISTO By ITZ | OIL & GAS — Registro oficial de asistencia y tiempos laborados para efectos de nómina.', 396, signatureY + 65, { align: 'center' });
 }
 
 function createPdf({ rows, totals, range, schedule, device, selectedEmployee, mode }) {

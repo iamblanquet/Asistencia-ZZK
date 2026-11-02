@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 430 128" width="430" height="128">
+  <style>
+    .sisto { font-family: 'Montserrat', 'Segoe UI', Arial, sans-serif; font-weight: 700; font-size: 72px; fill: #FFFFFF; letter-spacing: 2px; }
+    .by { font-family: 'Montserrat', 'Segoe UI', Arial, sans-serif; font-weight: 600; font-style: italic; font-size: 18px; fill: #FFFFFF; }
+    .oil { font-family: 'Montserrat', 'Segoe UI', Arial, sans-serif; font-weight: 600; font-size: 9.5px; fill: #FFFFFF; letter-spacing: 3.5px; }
+  </style>
+  <!-- A estilizada -->
+  <path d="M40 16 H51 L78 74 H66 L45.5 29.5 L25 74 H13 L40 16 Z" fill="#FFFFFF" />
+  <path d="M36.5 50 H53.5 L58 60 H41.5 L35 74 H25 L36.5 50 Z" fill="#FF7A00" />
+  <!-- SISTO -->
+  <text x="82" y="74" class="sisto">SISTO</text>
+
+  <!-- By ITZ | OIL & GAS -->
+  <text x="160" y="108" class="by">By</text>
+  <!-- Monograma ITZ -->
+  <g fill="#FFFFFF">
+    <rect x="194" y="90" width="4.5" height="22" rx="0.5" />
+    <path d="M201 90 H238 V94 H228 L215 108 H238 V112 H208 V108 L221 94 H211 V112 H206.5 V94 H201 V90 Z" />
+  </g>
+  <!-- Línea divisoria -->
+  <line x1="249" y1="82" x2="249" y2="118" stroke="#FFFFFF" stroke-width="2" />
+  <!-- Ícono Oil & Gas sobre el texto -->
+  <g transform="translate(276, 80)" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 14 C8 10 12 4 12 4 C12 4 16 10 16 14 C16 16.5 14.2 18.5 12 18.5 C9.8 18.5 8 16.5 8 14 Z" />
+    <path d="M18 18.5 H26 V11 L22 9 V18.5" />
+    <circle cx="23" cy="5" r="2" />
+    <path d="M4 18.5 H28" />
+  </g>
+  <!-- Acento naranja junto a OIL & GAS -->
+  <rect x="257" y="105" width="2" height="9" fill="#FF7A00" />
+  <text x="263" y="113" class="oil">OIL &amp; GAS</text>
+</svg>
