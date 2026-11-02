@@ -33,14 +33,15 @@ export function AsistoLogo({
 }) {
   const mainColor = variant === 'dark' || variant === 'on-orange' ? '#FFFFFF' : '#1B1F24';
   const accentColor = variant === 'on-orange' ? '#FFE0C2' : '#FF7A00';
+  const viewBoxWidth = showSubtitle ? 430 : 326;
   const viewBoxHeight = showSubtitle ? 128 : 84;
-  const aspect = 430 / viewBoxHeight;
+  const aspect = viewBoxWidth / viewBoxHeight;
   const width = Math.round(height * aspect);
 
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox={`0 0 430 ${viewBoxHeight}`}
+      viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
       width={width}
       height={height}
       className={className}
