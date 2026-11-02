@@ -966,13 +966,16 @@ function App() {
           }}
           title={sidebarCollapsed ? 'Expandir panel lateral' : 'Contraer panel lateral'}
         >
-          <span className="sidebar-brand-icon">
-            <AsistoIcon size={36} style={{ border: '1px solid rgba(255,255,255,0.14)', borderRadius: '8px' }} />
-          </span>
-          <div className="brand-block">
-            <AsistoLogo variant="dark" height={32} />
-            <p>Control de Asistencia</p>
-          </div>
+          {sidebarCollapsed ? (
+            <span className="sidebar-brand-icon">
+              <AsistoIcon size={28} />
+            </span>
+          ) : (
+            <div className="brand-block">
+              <AsistoLogo variant="dark" height={40} />
+              <p>Plataforma de control de asistencia</p>
+            </div>
+          )}
         </div>
 
         <div className="sidebar-device-select">
@@ -1116,7 +1119,7 @@ function App() {
         <header className="top-header">
           <div className="header-title-area">
             <span className="mobile-header-icon">
-              <AsistoIcon size={28} style={{ border: '1px solid rgba(255,255,255,0.14)', borderRadius: '7px' }} />
+              <AsistoIcon size={24} />
             </span>
             <h2>{
               activeTab === 'general' ? 'Panel General' :

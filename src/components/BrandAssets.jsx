@@ -1,22 +1,21 @@
 import React from 'react';
 
 /**
- * Ícono / Favicon oficial de ASISTO (Cuadrado redondeado Grafito #1B1F24 con A blanca y acento Naranja ITZ #FF7A00)
+ * Ícono oficial de ASISTO (Letra A estilizada en blanco con acento Naranja ITZ #FF7A00, sin borde de tarjeta)
  */
-export function AsistoIcon({ size = 36, className = '', style = {} }) {
+export function AsistoIcon({ size = 32, className = '', style = {} }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 120 120"
+      viewBox="14 16 92 84"
       width={size}
       height={size}
       className={className}
       style={{ flexShrink: 0, ...style }}
       aria-label="ASISTO Icon"
     >
-      <rect width="120" height="120" rx="26" fill="#1B1F24" border="1px solid rgba(255,255,255,0.1)" />
-      <path d="M53.5 22 H66.5 L100 95 H85.5 L60 38.5 L34.5 95 H20 L53.5 22 Z" fill="#FFFFFF" />
-      <path d="M49.5 64 H69.5 L75 76 H55.5 L47 95 H34.5 L49.5 64 Z" fill="#FF7A00" />
+      <path d="M53.5 20 H66.5 L100 96 H85.5 L60 37 L34.5 96 H20 L53.5 20 Z" fill="#FFFFFF" />
+      <path d="M49.5 64 H69.5 L75 76 H55.5 L47 96 H34.5 L49.5 64 Z" fill="#FF7A00" />
     </svg>
   );
 }
