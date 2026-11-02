@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Asistencia ZKTeco - Panel de Control</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'zk-bg-dark': '#0f111a',
+            'zk-bg-panel': '#1a1d2d',
+            'zk-bg-card': '#22263a',
+            'zk-text-light': '#e2e8f0',
+            'zk-text-muted': '#94a3b8',
+            'zk-accent-blue': '#4f46e5',
+            'zk-accent-purple': '#8b5cf6',
+            'zk-success': '#10b981',
+            'zk-warning': '#f59e0b',
+            'zk-danger': '#ef4444',
+            'zk-border': '#334155'
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+<style data-purpose="custom-utilities">
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0f111a;
+      color: #e2e8f0;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f111a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+
+    .glass-panel {
+      background: rgba(26, 29, 45, 0.7);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+  </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col font-sans text-sm">
+<!-- BEGIN: Main Layout Wrapper -->
+<div class="flex flex-1 overflow-hidden h-full">
+<!-- BEGIN: Sidebar -->
+<aside class="w-64 bg-zk-bg-dark border-r border-zk-border flex flex-col h-full flex-shrink-0 relative z-20">
+<!-- App Header -->
+<div class="h-16 flex items-center px-4 border-b border-zk-border">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center text-indigo-400">
+<i class="fa-solid fa-fingerprint text-lg"></i>
+</div>
+<div>
+<h1 class="font-bold text-white leading-tight">Asistencia ZKTeco</h1>
+<p class="text-[10px] text-zk-text-muted font-medium tracking-wider">PORTAL DE CONTROL</p>
+</div>
+</div>
+</div>
+<!-- Device Selector -->
+<div class="px-4 py-4">
+<p class="text-xs text-zk-text-muted font-semibold mb-2">DISPOSITIVO ACTIVO</p>
+<button class="w-full flex items-center justify-between bg-zk-bg-card px-3 py-2 rounded border border-zk-border hover:border-indigo-500/50 transition-colors">
+<div class="flex flex-col text-left">
+<span class="font-medium text-white text-sm">Thessa</span>
+<span class="text-xs text-zk-text-muted">172.28.10.105</span>
+</div>
+<i class="fa-solid fa-chevron-down text-zk-text-muted text-xs"></i>
+</button>
+</div>
+<!-- Navigation -->
+<div class="px-3 py-2 flex-1 overflow-y-auto">
+<p class="text-xs text-zk-text-muted font-semibold mb-2 px-1">NAVEGACIÓN</p>
+<nav class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 relative overflow-hidden group" href="#">
+<div class="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500 rounded-r"></div>
+<i class="fa-regular fa-clock w-5 text-center"></i>
+<span class="font-medium">Panel General</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zk-text-muted hover:text-white hover:bg-zk-bg-card transition-colors" href="#">
+<i class="fa-regular fa-calendar w-5 text-center"></i>
+<span>Rango de Fecha</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zk-text-muted hover:text-white hover:bg-zk-bg-card transition-colors" href="#">
+<i class="fa-solid fa-list-ul w-5 text-center"></i>
+<span>Historial Completo</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zk-text-muted hover:text-white hover:bg-zk-bg-card transition-colors" href="#">
+<i class="fa-solid fa-users w-5 text-center"></i>
+<span>Colaboradores</span>
+</a>
+</nav>
+</div>
+<!-- Bottom Status -->
+<div class="p-4 border-t border-zk-border bg-zk-bg-dark/50">
+<div class="flex items-center gap-2 mb-1">
+<div class="w-2 h-2 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.8)]"></div>
+<span class="text-xs font-medium text-white">Dispositivo Online</span>
+</div>
+<div class="flex justify-between text-[11px] text-zk-text-muted">
+<span>Logs en equipo:</span>
+<span class="font-mono text-white">282</span>
+</div>
+<div class="flex justify-between text-[11px] text-zk-text-muted mt-1">
+<span>Última sincro:</span>
+<span>13/07/2026 13:00</span>
+</div>
+</div>
+</aside>
+<!-- END: Sidebar -->
+<!-- BEGIN: Main Content Area -->
+<main class="flex-1 flex flex-col h-full bg-[#11131e] relative overflow-hidden">
+<!-- Background Glow Effect -->
+<div class="absolute top-0 left-1/4 w-[500px] h-[500px] bg-indigo-600/10 rounded-full blur-[120px] pointer-events-none"></div>
+<!-- Topbar -->
+<header class="h-16 flex items-center justify-between px-6 border-b border-zk-border/50 bg-[#11131e]/80 backdrop-blur-md z-10">
+<div class="flex items-center gap-2">
+<span class="text-zk-text-muted font-medium tracking-wide">PANEL GENERAL</span>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2 text-zk-text-muted">
+<i class="fa-solid fa-fingerprint text-xs"></i>
+<span class="text-sm">Biométricos</span>
+</div>
+<button class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded text-sm font-medium transition-colors flex items-center gap-2">
+<i class="fa-solid fa-rotate text-xs"></i>
+            Actualizar
+          </button>
+</div>
+</header>
+<!-- Dashboard Content -->
+<div class="flex-1 overflow-y-auto p-6 z-10">
+<!-- BEGIN: Header Cards Row -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+<!-- Main Title Card -->
+<div class="lg:col-span-2 glass-panel rounded-xl p-6 relative overflow-hidden border border-indigo-500/20">
+<div class="absolute inset-0 bg-gradient-to-br from-indigo-900/20 to-transparent"></div>
+<div class="relative z-10 flex flex-col h-full justify-between">
+<div>
+<div class="flex items-center gap-2 text-indigo-400 text-xs font-medium mb-3">
+<i class="fa-solid fa-circle-check"></i>
+                  Sistema Activo
+                </div>
+<h2 class="text-3xl font-bold text-white mb-3">Panel de Control de Asistencias</h2>
+<p class="text-zk-text-muted text-sm max-w-lg leading-relaxed">
+                  Monitorea de forma centralizada la asistencia, puntualidad y horas extras.
+                  Sincroniza datos en tiempo real y descarga reportes PDF listos para el pago de
+                  la quincena.
+                </p>
+</div>
+</div>
+</div>
+<!-- Device Status Card -->
+<div class="glass-panel rounded-xl p-6 border border-zk-border flex flex-col">
+<div class="flex justify-between items-start mb-4">
+<h3 class="text-sm font-medium text-white">Lector Biométrico</h3>
+<div class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs">
+<div class="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                Online
+              </div>
+</div>
+<div class="space-y-2 flex-1">
+<div class="flex justify-between text-sm">
+<span class="text-zk-text-muted">Nombre:</span>
+<span class="text-white font-medium">Thessa</span>
+</div>
+<div class="flex justify-between text-sm">
+<span class="text-zk-text-muted">Lector IP:</span>
+<span class="text-white font-mono">172.28.10.105:4370</span>
+</div>
+<div class="flex justify-between text-sm">
+<span class="text-zk-text-muted">Logs en Memoria:</span>
+<span class="text-white font-mono">282</span>
+</div>
+<div class="flex justify-between text-sm">
+<span class="text-zk-text-muted">Sincronizado:</span>
+<span class="text-white font-mono">13:00</span>
+</div>
+</div>
+<div class="flex gap-3 mt-4 pt-4 border-t border-zk-border/50">
+<button class="flex-1 py-1.5 rounded border border-zk-border hover:bg-zk-bg-card transition-colors text-zk-text-muted hover:text-white text-xs flex items-center justify-center gap-2">
+<i class="fa-solid fa-wifi"></i>
+                Probar IP
+              </button>
+<button class="flex-1 py-1.5 rounded bg-indigo-600/20 border border-indigo-500/30 text-indigo-400 hover:bg-indigo-600/30 transition-colors text-xs flex items-center justify-center gap-2">
+<i class="fa-solid fa-rotate"></i>
+                Sincronizar
+              </button>
+</div>
+</div>
+</div>
+<!-- END: Header Cards Row -->
+<!-- BEGIN: Metrics Row -->
+<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
+<!-- Metric: Eventos -->
+<div class="glass-panel rounded-xl p-4 border border-zk-border relative overflow-hidden group">
+<div class="flex justify-between items-start mb-2">
+<h4 class="text-[11px] font-semibold text-zk-text-muted uppercase tracking-wider">Eventos del Periodo</h4>
+<i class="fa-solid fa-fingerprint text-indigo-400/50"></i>
+</div>
+<div class="text-3xl font-bold text-white mb-1">104</div>
+<p class="text-[11px] text-zk-text-muted">Marcaciones filtradas</p>
+</div>
+<!-- Metric: Colaboradores -->
+<div class="glass-panel rounded-xl p-4 border border-zk-border">
+<div class="flex justify-between items-start mb-2">
+<h4 class="text-[11px] font-semibold text-zk-text-muted uppercase tracking-wider">Colaboradores</h4>
+<i class="fa-solid fa-users text-indigo-400/50"></i>
+</div>
+<div class="text-3xl font-bold text-white mb-1">6</div>
+<p class="text-[11px] text-zk-text-muted">Personal registrado</p>
+</div>
+<!-- Metric: Tiempo Trabajado -->
+<div class="glass-panel rounded-xl p-4 border border-zk-border">
+<div class="flex justify-between items-start mb-2">
+<h4 class="text-[11px] font-semibold text-zk-text-muted uppercase tracking-wider">Tiempo Trabajado</h4>
+<i class="fa-regular fa-clock text-indigo-400/50"></i>
+</div>
+<div class="text-3xl font-bold text-white mb-1 font-mono">423:19</div>
+<p class="text-[11px] text-zk-text-muted">Horas acumuladas</p>
+</div>
+<!-- Metric: Retardos -->
+<div class="glass-panel rounded-xl p-4 border border-amber-500/20 bg-amber-500/5">
+<div class="flex justify-between items-start mb-2">
+<h4 class="text-[11px] font-semibold text-zk-text-muted uppercase tracking-wider">Retardos</h4>
+<i class="fa-solid fa-triangle-exclamation text-amber-500/70"></i>
+</div>
+<div class="text-3xl font-bold text-amber-500 mb-1">12</div>
+<p class="text-[11px] text-zk-text-muted">Total incidencias</p>
+</div>
+<!-- Metric: Horas Extra -->
+<div class="glass-panel rounded-xl p-4 border border-emerald-500/20 bg-emerald-500/5">
+<div class="flex justify-between items-start mb-2">
+<h4 class="text-[11px] font-semibold text-zk-text-muted uppercase tracking-wider">Horas Extra</h4>
+<i class="fa-solid fa-plus text-emerald-500/70"></i>
+</div>
+<div class="text-3xl font-bold text-emerald-400 mb-1 font-mono">42:56</div>
+<p class="text-[11px] text-zk-text-muted">Acumulado adicional</p>
+</div>
+</div>
+<!-- END: Metrics Row -->
+<!-- BEGIN: Charts Row -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+<!-- Line Chart -->
+<div class="lg:col-span-2 glass-panel rounded-xl p-5 border border-zk-border flex flex-col h-80">
+<div class="flex items-center gap-2 mb-4 border-l-2 border-indigo-500 pl-2">
+<h3 class="font-medium text-white">Tendencia Diaria de Marcaciones</h3>
+</div>
+<div class="flex-1 w-full relative">
+<canvas id="trendChart"></canvas>
+</div>
+</div>
+<!-- Doughnut Chart -->
+<div class="glass-panel rounded-xl p-5 border border-zk-border flex flex-col h-80">
+<div class="flex items-center gap-2 mb-4 border-l-2 border-indigo-500 pl-2">
+<h3 class="font-medium text-white">Distribución de Asistencias</h3>
+</div>
+<div class="flex-1 flex flex-row items-center justify-center gap-6">
+<div class="relative w-40 h-40">
+<canvas id="distributionChart"></canvas>
+</div>
+<div class="flex flex-col gap-3 text-[11px]">
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-emerald-500"></div>
+<span class="text-white">A tiempo: <span class="text-zk-text-muted">60%</span></span>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-amber-500"></div>
+<span class="text-white">Retardo: <span class="text-zk-text-muted">19%</span></span>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-rose-500"></div>
+<span class="text-white">S. Temprana: <span class="text-zk-text-muted">21%</span></span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- END: Charts Row -->
+<!-- BEGIN: Modules Row -->
+<div class="mb-4 border-l-2 border-indigo-500 pl-2">
+<h3 class="font-medium text-white">Módulos de la Plataforma</h3>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+<!-- Module 1 -->
+<div class="glass-panel rounded-xl p-5 border border-zk-border hover:border-indigo-500/30 transition-colors cursor-pointer group">
+<div class="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400 mb-4 group-hover:bg-indigo-500/20 transition-colors">
+<i class="fa-regular fa-calendar-check text-lg"></i>
+</div>
+<h4 class="font-medium text-white mb-2">Asistencias Diarias</h4>
+<p class="text-xs text-zk-text-muted leading-relaxed">
+              Configure filtros de quincenas, turnos, retardos y descargue planillas formateadas en PDF consolidado o por empleado.
+            </p>
+</div>
+<!-- Module 2 -->
+<div class="glass-panel rounded-xl p-5 border border-indigo-500/30 bg-indigo-500/5 hover:border-indigo-500/50 transition-colors cursor-pointer group">
+<div class="w-10 h-10 rounded-lg bg-indigo-500/20 flex items-center justify-center text-indigo-400 mb-4">
+<i class="fa-solid fa-list-check text-lg"></i>
+</div>
+<h4 class="font-medium text-white mb-2">Bitácora de Eventos</h4>
+<p class="text-xs text-zk-text-muted leading-relaxed">
+              Revise el orden cronológico de marcaciones y lecturas (punchs) recolectadas de manera detallada en el biométrico activo.
+            </p>
+</div>
+<!-- Module 3 -->
+<div class="glass-panel rounded-xl p-5 border border-zk-border hover:border-indigo-500/30 transition-colors cursor-pointer group">
+<div class="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400 mb-4 group-hover:bg-indigo-500/20 transition-colors">
+<i class="fa-solid fa-gear text-lg"></i>
+</div>
+<h4 class="font-medium text-white mb-2">Administrar Biométricos</h4>
+<p class="text-xs text-zk-text-muted leading-relaxed">
+              Gestione múltiples relojes biométricos, configure IPs y puertos, y prepare operaciones avanzadas como Captura en Vivo.
+            </p>
+</div>
+</div>
+<!-- END: Modules Row -->
+</div>
+<!-- Footer Status Bar -->
+<footer class="h-8 border-t border-zk-border/50 bg-[#0f111a] flex items-center justify-between px-4 text-[10px] text-zk-text-muted uppercase tracking-wider z-10 shrink-0">
+<div>LOGS EN EQUIPO: 282</div>
+<div>ÚLTIMA SINCRONIZACIÓN: 13/07/2026 13:00</div>
+<div>MODO PLATAFORMA LECTURA BIOMÉTRICA</div>
+</footer>
+</main>
+<!-- END: Main Content Area -->
+</div>
+<!-- END: Main Layout Wrapper -->
+<!-- Scripts for Charts -->
+<script data-purpose="chart-initialization">
+    document.addEventListener('DOMContentLoaded', function() {
+      // Configuration for Chart.js defaults
+      Chart.defaults.color = '#94a3b8';
+      Chart.defaults.font.family = 'Inter';
+      Chart.defaults.font.size = 10;
+      
+      // Data for Trend Chart
+      const trendCtx = document.getElementById('trendChart').getContext('2d');
+      
+      // Create gradient for the line
+      const gradient = trendCtx.createLinearGradient(0, 0, 0, 300);
+      gradient.addColorStop(0, 'rgba(99, 102, 241, 0.2)');
+      gradient.addColorStop(1, 'rgba(99, 102, 241, 0)');
+
+      new Chart(trendCtx, {
+        type: 'line',
+        data: {
+          labels: ['06/29', '06/30', '07/01', '07/02', '07/03', '07/04', '07/06', '07/07', '07/08', '07/09', '07/10', '07/11', '07/13'],
+          datasets: [{
+            label: 'Marcaciones',
+            data: [10.5, 9.8, 7.5, 9.5, 8.2, 9.8, 8.5, 8.5, 9, 8.2, 7.2, 8, 4.5],
+            borderColor: '#6366f1',
+            backgroundColor: gradient,
+            borderWidth: 2,
+            pointBackgroundColor: '#1e1b4b',
+            pointBorderColor: '#6366f1',
+            pointBorderWidth: 2,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            fill: true,
+            tension: 0.4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#1e293b',
+              titleColor: '#f8fafc',
+              bodyColor: '#cbd5e1',
+              borderColor: '#334155',
+              borderWidth: 1,
+              padding: 10
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 12,
+              ticks: { stepSize: 3, padding: 10 },
+              grid: {
+                color: 'rgba(51, 65, 85, 0.3)',
+                drawBorder: false,
+              }
+            },
+            x: {
+              grid: { display: false, drawBorder: false },
+              ticks: { padding: 10 }
+            }
+          },
+          interaction: { intersect: false, mode: 'index' }
+        }
+      });
+
+      // Data for Distribution Chart
+      const distCtx = document.getElementById('distributionChart').getContext('2d');
+      new Chart(distCtx, {
+        type: 'doughnut',
+        data: {
+          labels: ['A tiempo', 'Retardo', 'S. Temprana'],
+          datasets: [{
+            data: [60, 19, 21],
+            backgroundColor: [
+              '#10b981', // Emerald
+              '#f59e0b', // Amber
+              '#e11d48'  // Rose
+            ],
+            borderWidth: 0,
+            hoverOffset: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '75%',
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+               backgroundColor: '#1e293b',
+               callbacks: {
+                 label: function(context) {
+                   return ' ' + context.label + ': ' + context.parsed + '%';
+                 }
+               }
+            }
+          }
+        }
+      });
+    });
+  </script>
+</body></html>

@@ -1,0 +1,13 @@
+node_modules
+dist
+server/data/*.db
+server/data/*.log
+.git
+.gemini
+.agents
+.system_generated
+Dockerfile
+docker-compose.yml
+task.md
+walkthrough.md
+implementation_plan.md

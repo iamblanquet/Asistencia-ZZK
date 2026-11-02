@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="es"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Asistencia ZKTeco - Consulta de Asistencia</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              bg: '#0F1322',
+              sidebar: '#161B2E',
+              panel: '#1A2035',
+              border: '#2A344A',
+              primary: '#6366F1',
+              primaryHover: '#4F46E5',
+              text: '#94A3B8',
+              textLight: '#E2E8F0',
+              success: '#22C55E',
+              danger: '#EF4444'
+            }
+          }
+        }
+      }
+    }
+  </script>
+<style data-purpose="custom-scrollbar">
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0F1322;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #2A344A;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3B4B69;
+    }
+    
+    /* Input placeholder styling for dark mode */
+    input[type="date"]::-webkit-calendar-picker-indicator {
+        filter: invert(1);
+        opacity: 0.5;
+    }
+    input[type="time"]::-webkit-calendar-picker-indicator {
+        filter: invert(1);
+        opacity: 0.5;
+    }
+  </style>
+</head>
+<body class="bg-brand-bg text-brand-text font-sans h-screen flex flex-col overflow-hidden">
+<!-- BEGIN: Top Navigation Bar -->
+<header class="bg-brand-sidebar border-b border-brand-border h-14 flex items-center justify-between px-4 shrink-0">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded bg-brand-panel flex items-center justify-center text-brand-primary">
+<i class="fa-solid fa-fingerprint"></i>
+</div>
+<div>
+<h1 class="text-brand-textLight font-semibold text-sm leading-tight">ASISTENCIA ZKTeco</h1>
+<p class="text-[10px] text-brand-text/70 uppercase tracking-wide">Portal de Control</p>
+</div>
+</div>
+<div class="flex-1 text-center font-medium text-brand-textLight text-sm">
+      CONSULTA DE ASISTENCIA
+    </div>
+<div class="flex items-center gap-3">
+<button class="text-xs flex items-center gap-1.5 px-2 py-1 rounded bg-brand-panel border border-brand-border hover:bg-brand-border transition-colors text-brand-textLight">
+<i class="fa-solid fa-gear"></i> Biométricos
+      </button>
+<button class="text-xs flex items-center gap-1.5 px-3 py-1 rounded bg-brand-primary hover:bg-brand-primaryHover transition-colors text-white font-medium shadow-sm">
+<i class="fa-solid fa-rotate"></i> Actualizar
+      </button>
+</div>
+</header>
+<!-- END: Top Navigation Bar -->
+<div class="flex flex-1 overflow-hidden">
+<!-- BEGIN: Sidebar -->
+<aside class="w-64 bg-brand-sidebar border-r border-brand-border flex flex-col shrink-0 overflow-y-auto">
+<!-- Device Selector -->
+<div class="p-4 border-b border-brand-border">
+<div class="text-[10px] text-brand-text uppercase font-semibold mb-1 flex items-center gap-1">
+<i class="fa-solid fa-microchip"></i> Dispositivo Activo
+        </div>
+<button class="w-full flex items-center justify-between bg-brand-panel p-2 rounded border border-brand-border hover:border-brand-text/30 transition-colors text-left">
+<span class="text-brand-textLight text-sm truncate font-medium">Thessa - 172.28.10.105</span>
+<i class="fa-solid fa-chevron-down text-xs text-brand-text"></i>
+</button>
+</div>
+<!-- Navigation Links -->
+<nav class="p-3 flex-1">
+<div class="text-[10px] text-brand-text uppercase font-semibold mb-2 px-2">Navegación</div>
+<ul class="space-y-1">
+<li>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-brand-text hover:bg-brand-panel hover:text-brand-textLight transition-colors" href="#">
+<i class="fa-solid fa-chart-pie w-4 text-center"></i>
+              Panel General
+            </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm bg-brand-primary/10 text-brand-primary border border-brand-primary/20 font-medium" href="#">
+<i class="fa-regular fa-calendar-days w-4 text-center"></i>
+              Rango de Fecha
+            </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-brand-text hover:bg-brand-panel hover:text-brand-textLight transition-colors" href="#">
+<i class="fa-solid fa-clock-rotate-left w-4 text-center"></i>
+              Historial Completo
+            </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-brand-text hover:bg-brand-panel hover:text-brand-textLight transition-colors" href="#">
+<i class="fa-solid fa-users w-4 text-center"></i>
+              Colaboradores
+            </a>
+</li>
+</ul>
+</nav>
+<!-- Connection Status (Bottom) -->
+<div class="p-4 border-t border-brand-border bg-brand-sidebar/50">
+<div class="flex items-center gap-2 mb-2">
+<div class="w-2 h-2 rounded-full bg-brand-success relative">
+<div class="absolute inset-0 bg-brand-success rounded-full animate-ping opacity-50"></div>
+</div>
+<span class="text-xs font-medium text-brand-textLight">Dispositivo Online</span>
+</div>
+<div class="flex justify-between text-[10px] text-brand-text">
+<span>Logs en equipo:</span>
+<span class="font-mono">282</span>
+</div>
+<div class="flex justify-between text-[10px] text-brand-text mt-1">
+<span>Última sincro:</span>
+<span class="font-mono">13/07/2026 13:00</span>
+</div>
+</div>
+</aside>
+<!-- END: Sidebar -->
+<!-- BEGIN: Main Content Area -->
+<main class="flex-1 flex flex-col min-w-0 bg-brand-bg relative overflow-y-auto">
+<div class="p-6 max-w-[1400px] mx-auto w-full flex flex-col gap-6">
+<!-- BEGIN: Filter Panel -->
+<section class="bg-brand-panel rounded-lg border border-brand-border shadow-lg">
+<!-- Panel Header -->
+<div class="px-5 py-4 border-b border-brand-border flex justify-between items-start">
+<div>
+<h2 class="text-lg font-semibold text-brand-textLight flex items-center gap-2">
+<i class="fa-solid fa-calendar-check text-brand-primary"></i> Control de Asistencia del Periodo
+              </h2>
+<p class="text-xs text-brand-text mt-1">Filtrado detallado y descarga de reportes oficiales.</p>
+</div>
+<div class="flex gap-2">
+<button class="px-3 py-1.5 bg-brand-bg border border-brand-border rounded text-xs text-brand-textLight hover:bg-brand-border flex items-center gap-1.5 transition-colors">
+<i class="fa-solid fa-file-pdf text-brand-primary"></i> PDF Consolidado
+              </button>
+<button class="px-3 py-1.5 bg-brand-bg border border-brand-border rounded text-xs text-brand-textLight hover:bg-brand-border flex items-center gap-1.5 transition-colors">
+<i class="fa-solid fa-file-lines text-brand-primary"></i> PDFs Individuales
+              </button>
+</div>
+</div>
+<!-- Filter Form -->
+<div class="p-5 grid grid-cols-1 md:grid-cols-12 gap-4">
+<!-- Dates -->
+<div class="md:col-span-3">
+<label class="block text-[10px] font-semibold text-brand-text uppercase mb-1.5">Fecha Inicio</label>
+<div class="relative">
+<input class="w-full bg-brand-bg border border-brand-border rounded-md py-2 px-3 text-sm text-brand-textLight focus:ring-1 focus:ring-brand-primary focus:border-brand-primary outline-none" type="date" value="2026-06-29"/>
+</div>
+</div>
+<div class="md:col-span-3">
+<label class="block text-[10px] font-semibold text-brand-text uppercase mb-1.5">Fecha Fin</label>
+<div class="relative">
+<input class="w-full bg-brand-bg border border-brand-border rounded-md py-2 px-3 text-sm text-brand-textLight focus:ring-1 focus:ring-brand-primary focus:border-brand-primary outline-none" type="date" value="2026-07-13"/>
+</div>
+</div>
+<!-- Colaborador Dropdown -->
+<div class="md:col-span-3">
+<label class="block text-[10px] font-semibold text-brand-text uppercase mb-1.5">Colaborador</label>
+<div class="relative">
+<select class="w-full bg-brand-bg border border-brand-border rounded-md py-2 px-3 text-sm text-brand-textLight appearance-none focus:ring-1 focus:ring-brand-primary focus:border-brand-primary outline-none pr-8">
+<option>Todos los colaboradores</option>
+<option>Rogelio</option>
+<option>Ana</option>
+</select>
+<i class="fa-solid fa-chevron-down absolute right-3 top-1/2 -translate-y-1/2 text-xs text-brand-text pointer-events-none"></i>
+</div>
+</div>
+<!-- Search & Submit -->
+<div class="md:col-span-3 flex flex-col justify-end">
+<label class="block text-[10px] font-semibold text-brand-text uppercase mb-1.5">Buscar por Nombre/ID</label>
+<div class="flex gap-2">
+<div class="relative flex-1">
+<input class="w-full bg-brand-bg border border-brand-border rounded-md py-2 px-3 text-sm text-brand-textLight placeholder-brand-text/50 focus:ring-1 focus:ring-brand-primary focus:border-brand-primary outline-none" placeholder="Buscar..." type="text"/>
+</div>
+</div>
+</div>
+<div class="md:col-span-12 flex justify-end mt-2">
+<button class="w-48 bg-brand-primary hover:bg-brand-primaryHover text-white font-medium py-2 px-4 rounded-md text-sm transition-colors shadow-sm flex items-center justify-center gap-2">
+<i class="fa-solid fa-magnifying-glass"></i> Consultar
+                 </button>
+</div>
+<!-- Divider -->
+<div class="md:col-span-12 border-t border-brand-border my-2"></div>
+<!-- Tolerancia y Horarios Section -->
+<div class="md:col-span-12">
+<h3 class="text-xs font-semibold text-brand-text flex items-center gap-1.5 mb-3 uppercase tracking-wide">
+<i class="fa-solid fa-gear"></i> Tolerancia y Horarios del Turno
+               </h3>
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+<!-- Entrada L-V -->
+<div>
+<label class="block text-[10px] text-brand-text uppercase mb-1.5">Entrada L-V</label>
+<input class="w-full bg-brand-bg border border-brand-border rounded-md py-1.5 px-3 text-sm text-brand-textLight focus:ring-1 focus:ring-brand-primary focus:border-brand-primary outline-none" type="time" value="08:30"/>
+</div>
+<!-- Salida L-V -->
+<div>
+<label class="block text-[10px] text-brand-text uppercase mb-1.5">Salida L-V</label>
+<input class="w-full bg-brand-bg border border-brand-border rounded-md py-1.5 px-3 text-sm text-brand-textLight focus:ring-1 focus:ring-brand-primary focus:border-brand-primary outline-none" type="time" value="17:00"/>
+</div>
+<!-- Entrada Sáb -->
+<div>
+<label class="block text-[10px] text-brand-text uppercase mb-1.5">Entrada Sáb</label>
+<input class="w-full bg-brand-bg border border-brand-border rounded-md py-1.5 px-3 text-sm text-brand-textLight focus:ring-1 focus:ring-brand-primary focus:border-brand-primary outline-none" type="time" value="09:00"/>
+</div>
+<!-- Salida Sáb -->
+<div>
+<label class="block text-[10px] text-brand-text uppercase mb-1.5">Salida Sáb</label>
+<input class="w-full bg-brand-bg border border-brand-border rounded-md py-1.5 px-3 text-sm text-brand-textLight focus:ring-1 focus:ring-brand-primary focus:border-brand-primary outline-none" type="time" value="16:00"/>
+</div>
+<!-- Tolerancia -->
+<div>
+<label class="block text-[10px] text-brand-text uppercase mb-1.5">Tolerancia (Minutos)</label>
+<input class="w-full bg-brand-bg border border-brand-border rounded-md py-1.5 px-3 text-sm text-brand-textLight focus:ring-1 focus:ring-brand-primary focus:border-brand-primary outline-none" type="number" value="15"/>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- END: Filter Panel -->
+<!-- BEGIN: Data Tabs & Table -->
+<section class="flex flex-col gap-0">
+<!-- Tabs -->
+<div class="flex gap-1 border-b border-brand-border mb-4 px-2">
+<button class="px-4 py-2 text-sm font-medium border-b-2 border-brand-primary text-brand-primary bg-brand-panel/50 rounded-t-lg">
+<i class="fa-solid fa-list-check mr-1"></i> Asistencias Diarias
+            </button>
+<button class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-brand-text hover:text-brand-textLight hover:border-brand-border transition-colors">
+<i class="fa-solid fa-clock-rotate-left mr-1"></i> Bitácora de Eventos
+            </button>
+<button class="px-4 py-2 text-sm font-medium border-b-2 border-transparent text-brand-text hover:text-brand-textLight hover:border-brand-border transition-colors">
+<i class="fa-solid fa-chart-bar mr-1"></i> Totales del Periodo
+            </button>
+</div>
+<!-- Table Container -->
+<div class="bg-brand-panel rounded-lg border border-brand-border shadow-lg overflow-hidden flex flex-col">
+<!-- Table Header Area -->
+<div class="px-5 py-3 border-b border-brand-border flex justify-between items-center bg-brand-panel/80">
+<h3 class="text-sm font-semibold text-brand-textLight">Bitácora de Eventos Recientes</h3>
+<div class="text-xs text-brand-text flex items-center gap-2">
+<button class="hover:text-brand-textLight disabled:opacity-50" disabled="">Anterior</button>
+<span class="bg-brand-bg px-2 py-1 rounded border border-brand-border font-mono">Pág 1 de 5</span>
+<button class="hover:text-brand-textLight">Siguiente</button>
+</div>
+</div>
+<!-- Table -->
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-brand-border bg-brand-bg/50">
+<th class="py-3 px-5 text-[10px] font-semibold text-brand-text uppercase tracking-wider">Fecha y Hora</th>
+<th class="py-3 px-5 text-[10px] font-semibold text-brand-text uppercase tracking-wider">ID Empleado</th>
+<th class="py-3 px-5 text-[10px] font-semibold text-brand-text uppercase tracking-wider">Nombre</th>
+<th class="py-3 px-5 text-[10px] font-semibold text-brand-text uppercase tracking-wider">Tipo de Registro</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-brand-border/50 text-sm font-medium text-brand-textLight">
+<!-- Row 1 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">29/06/2026 08:29</td>
+<td class="py-3 px-5">7</td>
+<td class="py-3 px-5">Rogelio</td>
+<td class="py-3 px-5"><span class="text-brand-success">Entrada</span></td>
+</tr>
+<!-- Row 2 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">29/06/2026 08:29</td>
+<td class="py-3 px-5">3</td>
+<td class="py-3 px-5">Ana</td>
+<td class="py-3 px-5"><span class="text-brand-success">Entrada</span></td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">29/06/2026 08:29</td>
+<td class="py-3 px-5">2</td>
+<td class="py-3 px-5">marycruzchavez</td>
+<td class="py-3 px-5"><span class="text-brand-success">Entrada</span></td>
+</tr>
+<!-- Row 4 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">29/06/2026 08:32</td>
+<td class="py-3 px-5">8</td>
+<td class="py-3 px-5">Marijo</td>
+<td class="py-3 px-5"><span class="text-brand-success">Entrada</span></td>
+</tr>
+<!-- Row 5 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">29/06/2026 08:54</td>
+<td class="py-3 px-5">5</td>
+<td class="py-3 px-5">Silviamartinez</td>
+<td class="py-3 px-5"><span class="text-brand-success">Entrada</span></td>
+</tr>
+<!-- Row 6 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">29/06/2026 15:14</td>
+<td class="py-3 px-5">8</td>
+<td class="py-3 px-5">Marijo</td>
+<td class="py-3 px-5"><span class="text-brand-danger">Salida Temprana</span></td>
+</tr>
+<!-- Row 7 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">29/06/2026 18:07</td>
+<td class="py-3 px-5">3</td>
+<td class="py-3 px-5">Ana</td>
+<td class="py-3 px-5"><span class="text-brand-text">Salida</span></td>
+</tr>
+<!-- Row 8 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">29/06/2026 18:16</td>
+<td class="py-3 px-5">2</td>
+<td class="py-3 px-5">marycruzchavez</td>
+<td class="py-3 px-5"><span class="text-brand-text">Salida</span></td>
+</tr>
+<!-- Row 9 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">29/06/2026 18:16</td>
+<td class="py-3 px-5">7</td>
+<td class="py-3 px-5">Rogelio</td>
+<td class="py-3 px-5"><span class="text-brand-text">Salida</span></td>
+</tr>
+<!-- Row 10 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">29/06/2026 18:19</td>
+<td class="py-3 px-5">5</td>
+<td class="py-3 px-5">Silviamartinez</td>
+<td class="py-3 px-5"><span class="text-brand-text">Salida</span></td>
+</tr>
+<!-- Row 11 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">30/06/2026 08:33</td>
+<td class="py-3 px-5">2</td>
+<td class="py-3 px-5">marycruzchavez</td>
+<td class="py-3 px-5"><span class="text-brand-success">Entrada</span></td>
+</tr>
+<!-- Row 12 -->
+<tr class="hover:bg-brand-bg/50 transition-colors">
+<td class="py-3 px-5 font-mono text-xs text-brand-text">30/06/2026 08:33</td>
+<td class="py-3 px-5">3</td>
+<td class="py-3 px-5">Ana</td>
+<td class="py-3 px-5"><span class="text-brand-success">Entrada</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</section>
+<!-- END: Data Tabs & Table -->
+</div>
+</main>
+<!-- END: Main Content Area -->
+</div>
+</body></html>

@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  zkteco-asistencia:
+    build: .
+    container_name: zkteco-asistencia-app
+    restart: always
+    ports:
+      - "5174:5174"
+    volumes:
+      - zkteco-data:/app/server/data
+
+volumes:
+  zkteco-data:
+    driver: local

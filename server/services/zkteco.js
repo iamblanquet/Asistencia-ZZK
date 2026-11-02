@@ -1,0 +1,526 @@
+const fs = require('fs');
+const path = require('path');
+const ZKLib = require('zklib-js');
+const { COMMANDS, MAX_CHUNK, REQUEST_DATA } = require('zklib-js/constants');
+const {
+  createTCPHeader,
+  decodeRecordData40,
+  decodeTCPHeader,
+  decodeUserData72,
+} = require('zklib-js/utils');
+const { getStoredEvents } = require('./eventStore');
+const { getEmployeeOverrides } = require('./db');
+
+loadEnvFile();
+
+function loadEnvFile() {
+  const envPath = path.join(__dirname, '../../.env');
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
+
+  const content = fs.readFileSync(envPath, 'utf8');
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+    const separator = trimmed.indexOf('=');
+    if (separator === -1) {
+      continue;
+    }
+    const key = trimmed.slice(0, separator).trim();
+    const value = trimmed.slice(separator + 1).trim().replace(/^['"]|['"]$/g, '');
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
+  }
+}
+
+function getDeviceConfig() {
+  return {
+    name: process.env.ZKTECO_NAME || 'ZKTeco WL20/EWL20',
+    model: process.env.ZKTECO_MODEL || 'WL20/EWL20',
+    protocol: process.env.ZKTECO_PROTOCOL || 'zk',
+    ip: process.env.ZKTECO_IP || '172.28.10.105',
+    port: Number(process.env.ZKTECO_PORT || 4370),
+    timeout: Number(process.env.ZKTECO_TIMEOUT || 15000),
+    inport: Number(process.env.ZKTECO_INPORT || 4000),
+  };
+}
+
+let deviceQueue = Promise.resolve();
+
+function enqueueDeviceWork(work) {
+  const run = deviceQueue.catch(() => {}).then(work);
+  deviceQueue = run.catch(() => {});
+  return run;
+}
+
+async function withReadOnlyDevice(deviceConfig, work) {
+  const config = {
+    ...getDeviceConfig(),
+    ...deviceConfig,
+    port: Number(deviceConfig?.port || getDeviceConfig().port),
+    timeout: Number(deviceConfig?.timeout || getDeviceConfig().timeout),
+    inport: Number(deviceConfig?.inport || getDeviceConfig().inport),
+  };
+  return enqueueDeviceWork(async () => {
+    const device = new ZKLib(config.ip, config.port, config.timeout, config.inport);
+
+    try {
+      await createSocketQuietly(device);
+      return await work(device, config);
+    } catch (error) {
+      error.publicMessage = `No se pudo conectar al ZKTeco ${config.model || ''} en ${config.ip}:${config.port}.`;
+      throw error;
+    } finally {
+      try {
+        await device.disconnect();
+      } catch (_error) {
+        // Some failed connection attempts leave no socket to close.
+      }
+    }
+  });
+}
+
+async function createSocketQuietly(device) {
+  const originalLog = console.log;
+  console.log = (...args) => {
+    const message = args.join(' ');
+    if (message === 'ok tcp' || message === 'ok udp') {
+      return;
+    }
+    originalLog(...args);
+  };
+
+  try {
+    await device.createSocket();
+  } finally {
+    console.log = originalLog;
+  }
+}
+
+async function readDeviceStatus(deviceConfig) {
+  return withReadOnlyDevice(deviceConfig, async (device, config) => {
+    const info = await safeRead(() => device.getInfo());
+    const deviceTime = await safeRead(() => device.getTime());
+    const deviceName = await safeRead(() => device.getDeviceName());
+    const serialNumber = await safeRead(() => device.getSerialNumber());
+    const firmware = await safeRead(() => device.getFirmware());
+
+    return {
+      ok: true,
+      device: config,
+      connectionType: device.connectionType || null,
+      deviceInfo: info,
+      deviceName,
+      serialNumber,
+      firmware,
+      deviceTime: deviceTime ? coerceDate(deviceTime)?.toISOString() : null,
+      checkedAt: new Date().toISOString(),
+      mode: 'read-only',
+    };
+  });
+}
+
+async function readDeviceDiagnostics(deviceConfig) {
+  const startedAt = Date.now();
+  try {
+    const status = await readDeviceStatus(deviceConfig);
+    return {
+      ...status,
+      elapsedMs: Date.now() - startedAt,
+      compatibility: {
+        protocol: 'ZK local TCP/UDP',
+        canReadByNetwork: true,
+        expectedPort: status.device.port,
+        note: 'Compatible mientras el equipo tenga Wi-Fi/red activa y permita conexion PC por protocolo ZK.',
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      device: {
+        ...getDeviceConfig(),
+        ...deviceConfig,
+      },
+      elapsedMs: Date.now() - startedAt,
+      message: error.publicMessage || error.message,
+      detail: error.message,
+      compatibility: {
+        protocol: 'ZK local TCP/UDP',
+        canReadByNetwork: false,
+        expectedPort: Number(deviceConfig?.port || getDeviceConfig().port),
+        note: 'Revise IP, Wi-Fi/VPN, puerto 4370, PC Connection y que el equipo no este solo en modo USB/ADMS.',
+      },
+    };
+  }
+}
+
+function filterDuplicatePunches(events) {
+  const seen = new Set();
+  return events.filter((event) => {
+    const key = `${event.employeeId}::${event.localDate}::${event.localTime}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+async function readAttendanceSnapshot(deviceConfig) {
+  return withReadOnlyDevice(deviceConfig, async (device, config) => {
+    const deviceInfo = await safeRead(() => device.getInfo());
+    const usersResult = await readUsersCompatible(device);
+    const attendanceResult = await readAttendancesCompatible(device);
+
+    const employees = normalizeEmployees(usersResult?.data || []);
+    const employeeIndex = buildEmployeeIndex(employees);
+    const pulledEvents = normalizeEvents(attendanceResult?.data || [], employeeIndex);
+    const storedEvents = normalizeStoredEvents(getStoredEvents(config.id), employeeIndex);
+    const events = [...pulledEvents, ...storedEvents];
+    const uniqueEvents = filterDuplicatePunches(events);
+
+    return {
+      device: config,
+      deviceInfo,
+      fetchedAt: new Date().toISOString(),
+      employees,
+      events: uniqueEvents,
+    };
+  });
+}
+
+function normalizeStoredEvents(records, employeeIndex) {
+  return records
+    .map((record) => {
+      const timestamp = coerceDate(record.timestamp);
+      if (!timestamp) {
+        return null;
+      }
+
+      const deviceUserId = cleanValue(record.deviceUserId || record.employeeId || record.userId);
+      const employee = employeeIndex.get(deviceUserId);
+      const employeeId = employee?.employeeId || cleanValue(record.employeeId) || deviceUserId;
+      const employeeName = employee?.name || cleanValue(record.employeeName) || `Empleado ${employeeId || 'sin numero'}`;
+
+      return {
+        id: `${record.source || 'local'}-${employeeId}-${timestamp.getTime()}`,
+        employeeId,
+        employeeName,
+        deviceUserId,
+        uid: employee?.uid || cleanValue(record.uid),
+        timestamp: timestamp.toISOString(),
+        localDate: record.localDate || toDateKey(timestamp),
+        localTime: record.localTime || toTimeKey(timestamp),
+        sourceIp: cleanValue(record.source),
+      };
+    })
+    .filter(Boolean);
+}
+
+async function readUsersCompatible(device) {
+  const standardResult = await safeRead(() => device.getUsers());
+  if (standardResult?.data?.length || device.connectionType !== 'tcp') {
+    return standardResult || { data: [] };
+  }
+
+  const fallbackResult = await safeRead(() => readTcpUsers(device.zklibTcp));
+  return fallbackResult?.data?.length ? fallbackResult : (standardResult || { data: [] });
+}
+
+async function readAttendancesCompatible(device) {
+  const standardResult = await safeRead(() => device.getAttendances());
+  if (standardResult?.data?.length || device.connectionType !== 'tcp') {
+    return standardResult || { data: [] };
+  }
+
+  const fallbackResult = await safeRead(() => readTcpAttendances(device.zklibTcp));
+  return fallbackResult?.data?.length ? fallbackResult : (standardResult || { data: [] });
+}
+
+async function readTcpUsers(tcp) {
+  await safeRead(() => tcp.freeData());
+  const data = await readTcpPreparedData(tcp, REQUEST_DATA.GET_USERS);
+  await safeRead(() => tcp.freeData());
+
+  const USER_PACKET_SIZE = 72;
+  let userData = data.subarray(4);
+  const users = [];
+
+  while (userData.length >= USER_PACKET_SIZE) {
+    users.push(decodeUserData72(userData.subarray(0, USER_PACKET_SIZE)));
+    userData = userData.subarray(USER_PACKET_SIZE);
+  }
+
+  return { data: users, fallback: 'tcp-prepared-data' };
+}
+
+async function readTcpAttendances(tcp) {
+  await safeRead(() => tcp.freeData());
+  const data = await readTcpPreparedData(tcp, REQUEST_DATA.GET_ATTENDANCE_LOGS);
+  await safeRead(() => tcp.freeData());
+
+  const RECORD_PACKET_SIZE = 40;
+  let recordData = data.subarray(4);
+  const records = [];
+
+  while (recordData.length >= RECORD_PACKET_SIZE) {
+    records.push({ ...decodeRecordData40(recordData.subarray(0, RECORD_PACKET_SIZE)), ip: tcp.ip });
+    recordData = recordData.subarray(RECORD_PACKET_SIZE);
+  }
+
+  return { data: records, fallback: 'tcp-prepared-data' };
+}
+
+function readTcpPreparedData(tcp, reqData) {
+  return new Promise(async (resolve, reject) => {
+    let timer = null;
+    let buffer = Buffer.from([]);
+
+    const cleanup = () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      tcp.socket.removeListener('data', handleData);
+      tcp.socket.removeListener('close', handleClose);
+    };
+
+    const fail = (error) => {
+      cleanup();
+      reject(error);
+    };
+
+    const finish = (size) => {
+      cleanup();
+      resolve(buffer.subarray(0, size));
+    };
+
+    const resetTimer = (size) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      timer = setTimeout(() => {
+        fail(new Error(`TIMEOUT_READING_TCP_PREPARED_DATA ${buffer.length}/${size}`));
+      }, tcp.timeout || 15000);
+    };
+
+    function handleClose() {
+      fail(new Error('SOCKET_CLOSED_READING_TCP_PREPARED_DATA'));
+    }
+
+    function handleData(chunk) {
+      const payload = stripTcpChunkHeader(chunk);
+      buffer = Buffer.concat([buffer, payload]);
+    }
+
+    try {
+      tcp.replyId++;
+      const request = createTCPHeader(COMMANDS.CMD_DATA_WRRQ, tcp.sessionId, tcp.replyId, reqData);
+      const reply = await tcp.requestData(request);
+      if (!reply) {
+        throw new Error('NO_PREPARE_DATA_REPLY');
+      }
+
+      const header = decodeTCPHeader(reply.subarray(0, 16));
+      if (header.commandId === COMMANDS.CMD_DATA) {
+        resolve(reply.subarray(16));
+        return;
+      }
+      if (header.commandId !== COMMANDS.CMD_ACK_OK && header.commandId !== COMMANDS.CMD_PREPARE_DATA) {
+        throw new Error(`UNEXPECTED_PREPARE_DATA_COMMAND ${header.commandId}`);
+      }
+
+      const recvData = reply.subarray(16);
+      const size = recvData.length >= 5 ? recvData.readUIntLE(1, 4) : 0;
+      if (size <= 0) {
+        resolve(Buffer.from([]));
+        return;
+      }
+
+      tcp.socket.on('data', handleData);
+      tcp.socket.once('close', handleClose);
+      resetTimer(size);
+
+      const poll = () => {
+        if (buffer.length >= size) {
+          finish(size);
+          return;
+        }
+        resetTimer(size);
+        setTimeout(poll, 25);
+      };
+
+      for (let start = 0; start < size; start += MAX_CHUNK) {
+        tcp.sendChunkRequest(start, Math.min(MAX_CHUNK, size - start));
+      }
+
+      poll();
+    } catch (error) {
+      fail(error);
+    }
+  });
+}
+
+function stripTcpChunkHeader(chunk) {
+  if (chunk.length >= 16 && chunk.compare(Buffer.from([0x50, 0x50, 0x82, 0x7d]), 0, 4, 0, 4) === 0) {
+    return chunk.subarray(16);
+  }
+  return chunk;
+}
+
+async function safeRead(read) {
+  try {
+    return await read();
+  } catch (_error) {
+    return null;
+  }
+}
+
+function normalizeEmployees(users) {
+  const overrides = getEmployeeOverrides();
+  return users
+    .map((user) => {
+      const uid = cleanValue(user.uid);
+      const userId = cleanValue(user.userId);
+      const employeeId = userId || uid;
+      const dbName = overrides[String(employeeId)];
+      const name = dbName || cleanValue(user.name) || `Empleado ${employeeId || uid}`;
+
+      return {
+        uid,
+        employeeId,
+        name,
+        role: user.role ?? null,
+        cardNo: cleanValue(user.cardno),
+      };
+    })
+    .filter((employee) => employee.employeeId || employee.uid)
+    .sort((a, b) => naturalCompare(a.employeeId, b.employeeId));
+}
+
+function buildEmployeeIndex(employees) {
+  const index = new Map();
+
+  for (const employee of employees) {
+    for (const key of [employee.employeeId, employee.uid]) {
+      const normalizedKey = cleanValue(key);
+      if (normalizedKey) {
+        index.set(normalizedKey, employee);
+      }
+    }
+  }
+
+  return index;
+}
+
+function normalizeEvents(records, employeeIndex) {
+  return records
+    .map((record) => {
+      const timestamp = coerceDate(record.recordTime || record.attTime || record.timestamp);
+      if (!timestamp) {
+        return null;
+      }
+
+      const deviceUserId = cleanValue(record.deviceUserId || record.userId || record.uid || record.userSn);
+      const employee = employeeIndex.get(deviceUserId);
+      const employeeId = employee?.employeeId || deviceUserId;
+      const employeeName = employee?.name || `Empleado ${employeeId || 'sin numero'}`;
+      const localDate = toDateKey(timestamp);
+
+      return {
+        id: `${employeeId || deviceUserId}-${timestamp.getTime()}-${cleanValue(record.userSn)}`,
+        employeeId,
+        employeeName,
+        deviceUserId,
+        uid: employee?.uid || cleanValue(record.userSn),
+        timestamp: timestamp.toISOString(),
+        localDate,
+        localTime: toTimeKey(timestamp),
+        sourceIp: cleanValue(record.ip),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+}
+
+function filterEvents(events, filters) {
+  const from = parseDateBoundary(filters.from, false);
+  const to = parseDateBoundary(filters.to, true);
+  const employeeId = cleanValue(filters.employeeId);
+
+  return events.filter((event) => {
+    const timestamp = coerceDate(event.timestamp);
+    if (!timestamp) {
+      return false;
+    }
+    if (from && timestamp < from) {
+      return false;
+    }
+    if (to && timestamp > to) {
+      return false;
+    }
+    if (employeeId && employeeId !== 'all' && cleanValue(event.employeeId) !== employeeId) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function parseDateBoundary(value, endOfDay) {
+  const parts = cleanValue(value).split('-').map(Number);
+  if (parts.length !== 3 || parts.some((part) => Number.isNaN(part))) {
+    return null;
+  }
+
+  const [year, month, day] = parts;
+  return endOfDay
+    ? new Date(year, month - 1, day, 23, 59, 59, 999)
+    : new Date(year, month - 1, day, 0, 0, 0, 0);
+}
+
+function coerceDate(value) {
+  if (!value) {
+    return null;
+  }
+
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function cleanValue(value) {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  return String(value).trim();
+}
+
+function toDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function toTimeKey(date) {
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+function naturalCompare(left, right) {
+  return cleanValue(left).localeCompare(cleanValue(right), 'es', {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
+
+module.exports = {
+  getDeviceConfig,
+  readDeviceStatus,
+  readDeviceDiagnostics,
+  readAttendanceSnapshot,
+  filterEvents,
+};
