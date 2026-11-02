@@ -293,27 +293,58 @@ export function IconConfiguracion({ size = 20, className = '' }) {
 }
 
 /**
- * Onda decorativa curva Naranja ITZ (#FF7A00) y Grafito (#1B1F24)
- * Tal como aparece en el Ejemplo de Aplicación (Login Desktop / Mobile) del Manual de Identidad Visual
+ * Decoración lateral derecha en tonos Naranja ITZ (#FF7A00) para la pantalla de Login
  */
 export function LoginWaveDecoration() {
   return (
-    <svg
-      className="login-wave-svg"
-      viewBox="0 0 500 800"
-      preserveAspectRatio="none"
-      aria-hidden="true"
-    >
-      {/* Banda Naranja ITZ (#FF7A00) */}
-      <path
-        d="M500 0 L430 0 C395 260 280 540 90 800 L500 800 Z"
-        fill="#FF7A00"
-      />
-      {/* Esquina inferior derecha Grafito (#1B1F24) */}
-      <path
-        d="M500 220 C455 440 365 650 220 800 L500 800 Z"
-        fill="#1B1F24"
-      />
-    </svg>
+    <div className="login-side-art" aria-hidden="true">
+      <div className="login-ambient-glow" />
+      <svg
+        className="login-wave-svg"
+        viewBox="0 0 600 900"
+        preserveAspectRatio="xMaxYMid slice"
+      >
+        <defs>
+          <linearGradient id="itzOrangeMain" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#FF9433" />
+            <stop offset="50%" stopColor="#FF7A00" />
+            <stop offset="100%" stopColor="#E56B00" />
+          </linearGradient>
+          <linearGradient id="itzOrangeSoft" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#FF7A00" stopOpacity="0.16" />
+            <stop offset="100%" stopColor="#FF7A00" stopOpacity="0.04" />
+          </linearGradient>
+          <linearGradient id="itzOrangeMid" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#FF7A00" stopOpacity="0.28" />
+            <stop offset="100%" stopColor="#FF9433" stopOpacity="0.1" />
+          </linearGradient>
+        </defs>
+
+        {/* Capa suave exterior */}
+        <path
+          d="M600 0 L340 0 C290 220 390 430 220 650 C140 755 60 830 0 900 L600 900 Z"
+          fill="url(#itzOrangeSoft)"
+        />
+
+        {/* Capa intermedia traslúcida */}
+        <path
+          d="M600 0 L410 0 C360 240 440 460 280 680 C200 790 120 855 50 900 L600 900 Z"
+          fill="url(#itzOrangeMid)"
+        />
+
+        {/* Onda principal Naranja ITZ (#FF7A00) fluida */}
+        <path
+          d="M600 0 L475 0 C430 250 485 480 340 700 C265 810 190 865 120 900 L600 900 Z"
+          fill="url(#itzOrangeMain)"
+        />
+
+        {/* Brillo curvo sutil interno sobre el naranja */}
+        <path
+          d="M600 180 C520 380 530 580 410 760 C355 840 300 880 250 900 L600 900 Z"
+          fill="#FFFFFF"
+          fillOpacity="0.08"
+        />
+      </svg>
+    </div>
   );
 }
