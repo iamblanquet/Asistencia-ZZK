@@ -33,6 +33,8 @@ Instalar dependencias con npm ci (o npm ci --omit=dev en el servidor). better-sq
 
 ## Pruebas
 
+Las horas extra se reconocen en bloques completos de 60 minutos posteriores a la salida programada, por empleado y jornada. Los minutos restantes se descartan antes de sumar el periodo: 20 minutos un dia y 40 al siguiente no generan horas extra; 80 minutos en una jornada generan 60 minutos reconocidos. La tolerancia sigue aplicando solamente a la entrada.
+
 node --test server/sqlite-isolation.test.js server/source-attendance.test.js
 
 Las pruebas usan datos temporales y no conectan al reloj. Comprueban migracion, IDs repetidos, permisos, nombres, horarios, deduplicacion, reapertura y conservacion de historial.

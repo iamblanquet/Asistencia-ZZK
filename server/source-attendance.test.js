@@ -7,7 +7,7 @@ const modulePromise = import('data:text/javascript;base64,' + Buffer.from(source
 const settings = { shiftStart: '08:30', shiftEnd: '18:00', satShiftStart: '08:30', satShiftEnd: '15:00', graceMinutes: 15 };
 async function calculate(times, date = '2026-10-30') {
   const { buildDailySummary } = await modulePromise;
-  return buildDailySummary(times.map(time => ({ employeeId: '1', timestamp: `${date}T${time}:00` })), [], settings)[0];
+  return buildDailySummary(times.map(time => ({ employeeId: '1', timestamp: `${date}T${time.length === 5 ? time + ':00' : time}` })), [], settings)[0];
 }
 test('early leave alone is not late', async () => {
   const row = await calculate(['08:40', '17:00']);
@@ -25,10 +25,37 @@ test('both incidents remain separate flags', async () => {
   assert.equal(row.isLate, true);
 });
 test('entry grace does not reduce overtime', async () => {
-  const row = await calculate(['08:45', '18:10']);
+  const row = await calculate(['08:45', '19:10']);
   assert.equal(row.isLate, false);
-  assert.equal(row.overtimeMinutes, 10);
+  assert.equal(row.overtimeMinutes, 60);
 });
 test('Saturday end time is respected', async () => {
-  assert.equal((await calculate(['08:30', '15:10'], '2026-10-31')).overtimeMinutes, 10);
+  assert.equal((await calculate(['08:30', '16:10'], '2026-10-31')).overtimeMinutes, 60);
+});
+
+test('only complete overtime hours count each day, without rounding up', async () => {
+  for (const [exit, minutes] of [['17:59', 0], ['18:00', 0], ['18:20', 0], ['18:59:59', 0], ['19:00', 60], ['19:20', 60], ['19:59:59', 60], ['20:00', 120]]) {
+    assert.equal((await calculate(['08:30', exit])).overtimeMinutes, minutes, exit);
+  }
+});
+
+test('partial overtime cannot accumulate across days or employees', async () => {
+  const { buildDailySummary, buildEmployeeTotals } = await modulePromise;
+  const punches = [
+    ['1', '2026-11-02', '08:30'], ['1', '2026-11-02', '18:20'],
+    ['1', '2026-11-03', '08:30'], ['1', '2026-11-03', '18:40'],
+    ['2', '2026-11-02', '08:30'], ['2', '2026-11-02', '18:40'],
+  ].map(([employeeId, date, time]) => ({ employeeId, timestamp: `${date}T${time}:00` }));
+  const totals = buildEmployeeTotals(buildDailySummary(punches, [], settings));
+  assert.equal(totals.reduce((sum, row) => sum + row.overtimeMinutes, 0), 0);
+});
+
+test('period totals sum complete daily hours only', async () => {
+  const { buildEmployeeTotals } = await modulePromise;
+  const days = [await calculate(['08:30', '19:20']), await calculate(['08:30', '19:50'], '2026-11-02')];
+  assert.equal(buildEmployeeTotals(days)[0].overtimeMinutes, 120);
+});
+
+test('single late punch never produces overtime', async () => {
+  assert.equal((await calculate(['20:00'])).overtimeMinutes, 0);
 });
