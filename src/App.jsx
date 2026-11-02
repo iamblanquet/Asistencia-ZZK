@@ -1109,7 +1109,6 @@ function App() {
           </div>
           <div className="header-actions">
             <AsistoLogo variant="dark" height={24} showSubtitle={false} />
-            <span className="biometric-indicator">Biométricos</span>
           </div>
         </header>
 
@@ -1126,10 +1125,7 @@ function App() {
               {/* Row 1: Top Row */}
               <div className="top-row">
                 <div className="card top-summary-card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
-                    <span className="badge-active" style={{ marginBottom: 0 }}>Sistema Activo</span>
-                    <AsistoLogo variant={theme === 'dark' ? 'dark' : 'light'} height={28} />
-                  </div>
+                  <span className="badge-active">Sistema Activo</span>
                   <h3>Plataforma de Control de Asistencia</h3>
                   <p className="panel-description">
                     Monitorea de forma centralizada la asistencia, puntualidad y horas extras.
