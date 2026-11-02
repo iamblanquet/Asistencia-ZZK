@@ -941,10 +941,26 @@ function App() {
     );
   }
 
+  function selectTab(tab) {
+    setActiveTab(tab);
+    if (typeof window !== 'undefined' && window.innerWidth <= 950) {
+      setSidebarCollapsed(true);
+    }
+  }
+
   return (
     <div className="app-layout">
+      {/* Backdrop para cerrar drawer móvil */}
+      {!sidebarCollapsed && (
+        <div
+          className="mobile-sidebar-backdrop"
+          onClick={() => setSidebarCollapsed(true)}
+          aria-hidden="true"
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : 'mobile-open'}`}>
         <div className="sidebar-brand">
           <button
             type="button"
@@ -992,7 +1008,7 @@ function App() {
           <span className="section-label">Navegación</span>
           <button 
             className={`nav-item ${activeTab === 'general' ? 'active' : ''}`}
-            onClick={() => setActiveTab('general')}
+            onClick={() => selectTab('general')}
             title="Panel General / Reportes"
           >
             <IconReportes size={19} />
@@ -1000,7 +1016,7 @@ function App() {
           </button>
           <button 
             className={`nav-item ${activeTab === 'asistencias' ? 'active' : ''}`}
-            onClick={() => setActiveTab('asistencias')}
+            onClick={() => selectTab('asistencias')}
             title="Asistencia por Rango de Fecha"
           >
             <IconAsistencia size={19} />
@@ -1008,7 +1024,7 @@ function App() {
           </button>
           <button 
             className={`nav-item ${activeTab === 'eventos' ? 'active' : ''}`}
-            onClick={() => setActiveTab('eventos')}
+            onClick={() => selectTab('eventos')}
             title="Entradas / Salidas e Historial"
           >
             <IconEntradasSalidas size={19} />
@@ -1016,7 +1032,7 @@ function App() {
           </button>
           <button 
             className={`nav-item ${activeTab === 'colaboradores' ? 'active' : ''}`}
-            onClick={() => setActiveTab('colaboradores')}
+            onClick={() => selectTab('colaboradores')}
             title="Personal y Colaboradores"
           >
             <IconPersonal size={19} />
@@ -1025,7 +1041,7 @@ function App() {
           {currentUser && currentUser.role === 'admin' && (
             <button 
               className={`nav-item ${activeTab === 'usuarios' ? 'active' : ''}`}
-              onClick={() => setActiveTab('usuarios')}
+              onClick={() => selectTab('usuarios')}
               title="Configuración de Usuarios del Portal"
             >
               <IconConfiguracion size={19} />
@@ -1104,11 +1120,20 @@ function App() {
       <div className="main-content">
         <header className="top-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              type="button"
+              className="mobile-menu-btn"
+              onClick={() => setSidebarCollapsed((current) => !current)}
+              aria-label="Abrir opciones y perfil"
+              title="Opciones y Sede"
+            >
+              <Menu size={20} />
+            </button>
             <h2>{
               activeTab === 'general' ? 'Panel General' :
               activeTab === 'asistencias' ? 'Asistencia' :
-              activeTab === 'eventos' ? 'Entradas / Salidas' :
-              activeTab === 'colaboradores' ? 'Personal' :
+              activeTab === 'eventos' ? 'Bitácora' :
+              activeTab === 'colaboradores' ? 'Colaboradores' :
               activeTab === 'usuarios' ? 'Usuarios Portal' : 'Configuración'
             }</h2>
           </div>
@@ -1352,7 +1377,7 @@ function App() {
 
                 <div className="card chart-container-card" style={{ display: 'flex', flexDirection: 'column' }}>
                   <h3>Distribución de Asistencias</h3>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', flex: 1, marginTop: '12px' }}>
+                  <div className="distribution-chart-body" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', flex: 1, marginTop: '12px', flexWrap: 'wrap' }}>
                     {distributionData.length > 0 ? (
                       <>
                         <div style={{ width: '180px', height: '180px', flexShrink: 0 }}>
@@ -1807,7 +1832,7 @@ function App() {
               <div className="table-card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
                   <h3 style={{ margin: 0 }}>Personal Registrado ({filteredEmployees.length})</h3>
-                  <div style={{ position: 'relative', width: '250px' }}>
+                  <div className="colaboradores-search-wrap" style={{ position: 'relative', width: '250px', maxWidth: '100%' }}>
                     <input 
                       type="search" 
                       placeholder="Buscar por ID o Nombre..." 
@@ -2173,7 +2198,7 @@ function App() {
           <div className="modal-overlay" onClick={() => setIsConfigOpen(false)}>
             <div
               className="modal-content config-modal-content"
-              style={currentUser?.role !== 'admin' ? { height: 'auto', maxHeight: '85vh', width: '640px' } : undefined}
+              style={currentUser?.role !== 'admin' ? { height: 'auto', maxHeight: '88vh', width: 'min(640px, 95vw)' } : undefined}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="modal-header">
@@ -2419,6 +2444,71 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* Barra de Navegación Inferior Móvil (Estilo App Nativa) */}
+        <nav className="mobile-bottom-nav" aria-label="Navegación principal móvil">
+          <button
+            type="button"
+            className={`mobile-nav-item ${activeTab === 'general' ? 'active' : ''}`}
+            onClick={() => selectTab('general')}
+          >
+            <span className="mobile-nav-icon-wrap">
+              <LayoutDashboard size={21} strokeWidth={1.9} />
+              {activeTab === 'general' && <span className="mobile-nav-dot" />}
+            </span>
+            <span className="mobile-nav-label">Resumen</span>
+          </button>
+
+          <button
+            type="button"
+            className={`mobile-nav-item ${activeTab === 'colaboradores' ? 'active' : ''}`}
+            onClick={() => selectTab('colaboradores')}
+          >
+            <span className="mobile-nav-icon-wrap">
+              <Users size={21} strokeWidth={1.9} />
+              {activeTab === 'colaboradores' && <span className="mobile-nav-dot" />}
+            </span>
+            <span className="mobile-nav-label">Colaboradores</span>
+          </button>
+
+          <button
+            type="button"
+            className={`mobile-nav-item ${activeTab === 'asistencias' ? 'active' : ''}`}
+            onClick={() => selectTab('asistencias')}
+          >
+            <span className="mobile-nav-icon-wrap">
+              <CalendarDays size={21} strokeWidth={1.9} />
+              {activeTab === 'asistencias' && <span className="mobile-nav-dot" />}
+            </span>
+            <span className="mobile-nav-label">Asistencia</span>
+          </button>
+
+          <button
+            type="button"
+            className={`mobile-nav-item ${activeTab === 'eventos' ? 'active' : ''}`}
+            onClick={() => selectTab('eventos')}
+          >
+            <span className="mobile-nav-icon-wrap">
+              <Clock size={21} strokeWidth={1.9} />
+              {activeTab === 'eventos' && <span className="mobile-nav-dot" />}
+            </span>
+            <span className="mobile-nav-label">Bitácora</span>
+          </button>
+
+          {currentUser && currentUser.role === 'admin' && (
+            <button
+              type="button"
+              className={`mobile-nav-item ${activeTab === 'usuarios' ? 'active' : ''}`}
+              onClick={() => selectTab('usuarios')}
+            >
+              <span className="mobile-nav-icon-wrap">
+                <Settings size={21} strokeWidth={1.9} />
+                {activeTab === 'usuarios' && <span className="mobile-nav-dot" />}
+              </span>
+              <span className="mobile-nav-label">Usuarios</span>
+            </button>
+          )}
+        </nav>
       </div>
     </div>
   );
