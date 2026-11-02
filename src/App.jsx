@@ -1133,7 +1133,7 @@ function App() {
                 </div>
 
                 <div className="card top-punctual-card">
-                  <h3 style={{ marginTop: 0 }}>Más Temprano Llegaron</h3>
+                  <h3 style={{ marginTop: 0 }}>Colaboradores más puntuales</h3>
                   <div className="punctual-list">
                     {topPunctualEmployees.length > 0 ? (
                       topPunctualEmployees.map((emp, index) => (
@@ -1174,34 +1174,71 @@ function App() {
                   </button>
                 </div>
 
-                <div className="card top-device-card">
-                  <span className={`lector-badge-online ${isConnected ? 'online' : 'offline'}`}>
-                    {isConnected ? 'Online' : 'Offline'}
-                  </span>
-                  <h3>Lector Biométrico</h3>
-                  <div className="lector-details">
-                    <div className="lector-detail-row">
-                      <span className="lector-detail-label">Nombre:</span>
-                      <span className="lector-detail-value">{device.name || 'ZKTeco'}</span>
+                {currentUser?.role === 'admin' ? (
+                  <div className="card top-device-card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <h3 style={{ margin: 0 }}>Lector Biométrico</h3>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.74rem', fontWeight: 700, color: isConnected ? 'var(--success)' : 'var(--danger)' }}>
+                        <span className={`status-dot ${isConnected ? 'online' : 'offline'}`} />
+                        {isConnected ? 'Online' : 'Offline'}
+                      </span>
                     </div>
-                    <div className="lector-detail-row">
-                      <span className="lector-detail-label">Lector IP:</span>
-                      <span className="lector-detail-value">{device.ip}:{device.port}</span>
+                    <div className="lector-details">
+                      <div className="lector-detail-row">
+                        <span className="lector-detail-label">Nombre:</span>
+                        <span className="lector-detail-value">{device.name || 'ZKTeco'}</span>
+                      </div>
+                      <div className="lector-detail-row">
+                        <span className="lector-detail-label">Lector IP:</span>
+                        <span className="lector-detail-value">{device.ip}:{device.port}</span>
+                      </div>
+                      <div className="lector-detail-row">
+                        <span className="lector-detail-label">Logs en Memoria:</span>
+                        <span className="lector-detail-value">{deviceInfo?.logCounts ?? '-'}</span>
+                      </div>
+                      <div className="lector-detail-row">
+                        <span className="lector-detail-label">Sincronizado:</span>
+                        <span className="lector-detail-value">{fetchedAt ? timeLabel(fetchedAt) : '-'}</span>
+                      </div>
                     </div>
-                    <div className="lector-detail-row">
-                      <span className="lector-detail-label">Logs en Memoria:</span>
-                      <span className="lector-detail-value">{deviceInfo?.logCounts ?? '-'}</span>
-                    </div>
-                    <div className="lector-detail-row">
-                      <span className="lector-detail-label">Sincronizado:</span>
-                      <span className="lector-detail-value">{fetchedAt ? timeLabel(fetchedAt) : '-'}</span>
+                    <div className="lector-actions">
+                      <button className="btn-action btn-action-secondary" onClick={() => loadEvents()} disabled={loading}>Probar IP</button>
+                      <button className="btn-action btn-action-primary" onClick={() => loadEvents()} disabled={loading}>Sincronizar</button>
                     </div>
                   </div>
-                  <div className="lector-actions">
-                    <button className="btn-action btn-action-secondary" onClick={() => loadEvents()} disabled={loading}>Probar IP</button>
-                    <button className="btn-action btn-action-primary" onClick={() => loadEvents()} disabled={loading}>Sincronizar</button>
+                ) : (
+                  <div className="card top-device-card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <h3 style={{ margin: 0 }}>Horario y Jornada Activa</h3>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.74rem', fontWeight: 700, color: isConnected ? 'var(--success)' : 'var(--text-soft)' }}>
+                        <span className={`status-dot ${isConnected ? 'online' : 'offline'}`} />
+                        {device.name || 'Sede Activa'}
+                      </span>
+                    </div>
+                    <div className="lector-details">
+                      <div className="lector-detail-row">
+                        <span className="lector-detail-label">Lunes a Viernes:</span>
+                        <span className="lector-detail-value">{schedule.shiftStart} - {schedule.shiftEnd}</span>
+                      </div>
+                      <div className="lector-detail-row">
+                        <span className="lector-detail-label">Sábados:</span>
+                        <span className="lector-detail-value">{schedule.satShiftStart || '08:00'} - {schedule.satShiftEnd || '13:00'}</span>
+                      </div>
+                      <div className="lector-detail-row">
+                        <span className="lector-detail-label">Tolerancia:</span>
+                        <span className="lector-detail-value">{schedule.graceMinutes} min</span>
+                      </div>
+                      <div className="lector-detail-row">
+                        <span className="lector-detail-label">Última actualización:</span>
+                        <span className="lector-detail-value">{fetchedAt ? timeLabel(fetchedAt) : '-'}</span>
+                      </div>
+                    </div>
+                    <div className="lector-actions">
+                      <button className="btn-action btn-action-secondary" onClick={openConfigModal}>Ajustar Turno</button>
+                      <button className="btn-action btn-action-primary" onClick={() => loadEvents()} disabled={loading}>Actualizar</button>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* Row 2: Metrics Row con Iconografía Oficial ASISTO */}
