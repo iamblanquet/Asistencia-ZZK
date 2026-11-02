@@ -972,7 +972,7 @@ function App() {
             </span>
           ) : (
             <div className="brand-block">
-              <AsistoLogo variant="dark" height={40} />
+              <AsistoLogo variant="dark" height={28} showSubtitle={false} />
               <p>Plataforma de control de asistencia</p>
             </div>
           )}
