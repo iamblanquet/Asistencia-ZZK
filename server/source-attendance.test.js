@@ -33,8 +33,8 @@ test('Saturday end time is respected', async () => {
   assert.equal((await calculate(['08:30', '16:10'], '2026-10-31')).overtimeMinutes, 60);
 });
 
-test('only complete overtime hours count each day, without rounding up', async () => {
-  for (const [exit, minutes] of [['17:59', 0], ['18:00', 0], ['18:20', 0], ['18:59:59', 0], ['19:00', 60], ['19:20', 60], ['19:59:59', 60], ['20:00', 120]]) {
+test('daily overtime recognizes hours at exact 50-minute thresholds', async () => {
+  for (const [exit, minutes] of [['17:59', 0], ['18:00', 0], ['18:20', 0], ['18:49', 0], ['18:49:59', 0], ['18:50', 60], ['18:59:59', 60], ['19:00', 60], ['19:20', 60], ['19:49', 60], ['19:49:59', 60], ['19:50', 120], ['19:59:59', 120], ['20:00', 120], ['20:49:59', 120], ['20:50', 180]]) {
     assert.equal((await calculate(['08:30', exit])).overtimeMinutes, minutes, exit);
   }
 });
@@ -50,10 +50,16 @@ test('partial overtime cannot accumulate across days or employees', async () => 
   assert.equal(totals.reduce((sum, row) => sum + row.overtimeMinutes, 0), 0);
 });
 
-test('period totals sum complete daily hours only', async () => {
+test('period totals sum independently recognized daily hours', async () => {
   const { buildEmployeeTotals } = await modulePromise;
   const days = [await calculate(['08:30', '19:20']), await calculate(['08:30', '19:50'], '2026-11-02')];
-  assert.equal(buildEmployeeTotals(days)[0].overtimeMinutes, 120);
+  assert.equal(buildEmployeeTotals(days)[0].overtimeMinutes, 180);
+});
+
+test('Saturday uses the same 50-minute threshold after its scheduled exit', async () => {
+  assert.equal((await calculate(['08:30', '15:49:59'], '2026-10-31')).overtimeMinutes, 0);
+  assert.equal((await calculate(['08:30', '15:50'], '2026-10-31')).overtimeMinutes, 60);
+  assert.equal((await calculate(['08:30', '16:50'], '2026-10-31')).overtimeMinutes, 120);
 });
 
 test('single late punch never produces overtime', async () => {

@@ -33,7 +33,7 @@ Instalar dependencias con npm ci (o npm ci --omit=dev en el servidor). better-sq
 
 ## Pruebas
 
-Las horas extra se reconocen en bloques completos de 60 minutos posteriores a la salida programada, por empleado y jornada. Los minutos restantes se descartan antes de sumar el periodo: 20 minutos un dia y 40 al siguiente no generan horas extra; 80 minutos en una jornada generan 60 minutos reconocidos. La tolerancia sigue aplicando solamente a la entrada.
+Las horas extra se calculan por empleado y jornada desde la salida programada. Cada hora se reconoce al alcanzar 50 minutos: 49 minutos generan cero, 50 generan una hora, 109 generan una y 110 generan dos. Los sobrantes no se trasladan a otros dias ni empleados: 20 minutos un dia y 40 al siguiente no generan horas extra. La tolerancia sigue aplicando solamente a la entrada. Este resultado es calculado; las marcaciones originales no se alteran.
 
 node --test server/sqlite-isolation.test.js server/source-attendance.test.js
 

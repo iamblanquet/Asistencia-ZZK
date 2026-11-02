@@ -155,9 +155,9 @@ function calculateDay(day, settings) {
   const scheduledMinutes = Math.max(0, minutesBetween(scheduledStart, scheduledEnd));
   const lateMinutes = firstPunch ? Math.max(0, minutesBetween(scheduledStart, firstPunch)) : 0;
   const isLate = hasPair && lateMinutes > graceMinutes;
-  // Discard partial hours per employee and workday before accumulating totals.
+  // Recognize each extra hour at 50 minutes, separately for each employee/workday.
   const overtimeMinutes = hasPair
-    ? Math.max(0, Math.floor((lastPunch - scheduledEnd) / (60 * MINUTE))) * 60
+    ? Math.max(0, Math.floor((lastPunch - scheduledEnd + 10 * MINUTE) / (60 * MINUTE))) * 60
     : 0;
   const earlyLeaveMinutes = hasPair ? Math.max(0, minutesBetween(lastPunch, scheduledEnd)) : 0;
   const isEarlyLeave = earlyLeaveMinutes > 0;
