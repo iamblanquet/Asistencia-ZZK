@@ -1130,9 +1130,6 @@ function App() {
             }</h2>
           </div>
           <div className="header-actions">
-            <div className="desktop-header-logo">
-              <AsistoLogo variant="dark" height={24} showSubtitle={false} />
-            </div>
             <div className="mobile-header-controls">
               <select
                 className="mobile-sede-select"
