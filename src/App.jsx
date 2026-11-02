@@ -19,7 +19,8 @@ import {
   Menu,
   Settings,
   Plus,
-  Trash2
+  Trash2,
+  LogOut
 } from 'lucide-react';
 import {
   AsistoIcon,
@@ -950,33 +951,27 @@ function App() {
 
   return (
     <div className="app-layout">
-      {/* Backdrop para cerrar drawer móvil */}
-      {!sidebarCollapsed && (
+      {/* Sidebar (Solo Escritorio) */}
+      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div
-          className="mobile-sidebar-backdrop"
-          onClick={() => setSidebarCollapsed(true)}
-          aria-hidden="true"
-        />
-      )}
-
-      {/* Sidebar */}
-      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : 'mobile-open'}`}>
-        <div className="sidebar-brand">
-          <button
-            type="button"
-            className="sidebar-toggle"
-            onClick={() => setSidebarCollapsed((current) => !current)}
-            aria-label={sidebarCollapsed ? 'Abrir menú lateral' : 'Cerrar menú lateral'}
-            title={sidebarCollapsed ? 'Abrir menú lateral' : 'Cerrar menú lateral'}
-          >
-            {sidebarCollapsed ? <AsistoIcon size={34} /> : <Menu size={18} />}
-          </button>
+          className="sidebar-brand"
+          onClick={() => setSidebarCollapsed((current) => !current)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              setSidebarCollapsed((current) => !current);
+            }
+          }}
+          title={sidebarCollapsed ? 'Expandir panel lateral' : 'Contraer panel lateral'}
+        >
+          <span className="sidebar-brand-icon">
+            <AsistoIcon size={36} style={{ border: '1px solid rgba(255,255,255,0.14)', borderRadius: '8px' }} />
+          </span>
           <div className="brand-block">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <AsistoIcon size={30} style={{ border: '1px solid rgba(255,255,255,0.14)', borderRadius: '7px' }} />
-              <AsistoLogo variant="dark" height={34} />
-            </div>
-            <p>Plataforma de control de asistencia</p>
+            <AsistoLogo variant="dark" height={32} />
+            <p>Control de Asistencia</p>
           </div>
         </div>
 
@@ -1119,16 +1114,10 @@ function App() {
       {/* Main Content */}
       <div className="main-content">
         <header className="top-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button
-              type="button"
-              className="mobile-menu-btn"
-              onClick={() => setSidebarCollapsed((current) => !current)}
-              aria-label="Abrir opciones y perfil"
-              title="Opciones y Sede"
-            >
-              <Menu size={20} />
-            </button>
+          <div className="header-title-area">
+            <span className="mobile-header-icon">
+              <AsistoIcon size={28} style={{ border: '1px solid rgba(255,255,255,0.14)', borderRadius: '7px' }} />
+            </span>
             <h2>{
               activeTab === 'general' ? 'Panel General' :
               activeTab === 'asistencias' ? 'Asistencia' :
@@ -1138,7 +1127,50 @@ function App() {
             }</h2>
           </div>
           <div className="header-actions">
-            <AsistoLogo variant="dark" height={24} showSubtitle={false} />
+            <div className="desktop-header-logo">
+              <AsistoLogo variant="dark" height={24} showSubtitle={false} />
+            </div>
+            <div className="mobile-header-controls">
+              <select
+                className="mobile-sede-select"
+                value={activeDeviceId}
+                onChange={(e) => {
+                  const newId = e.target.value;
+                  setActiveDeviceId(newId);
+                  loadEvents(range, newId);
+                }}
+                aria-label="Seleccionar sede activa"
+              >
+                {devices.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+                {devices.length === 0 && (
+                  <option value={device.id || 'dev-default'}>
+                    {device.name || 'Sede Principal'}
+                  </option>
+                )}
+              </select>
+              <button
+                type="button"
+                className="mobile-header-btn"
+                onClick={() => setTheme((current) => (current === 'light' ? 'dark' : 'light'))}
+                title={theme === 'light' ? 'Modo oscuro' : 'Modo claro'}
+                aria-label="Cambiar tema"
+              >
+                {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+              </button>
+              <button
+                type="button"
+                className="mobile-header-btn logout"
+                onClick={handleLogout}
+                title="Cerrar Sesión"
+                aria-label="Cerrar Sesión"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
           </div>
         </header>
 
@@ -1599,8 +1631,8 @@ function App() {
                 <h3 style={{ margin: 0 }}>Historial Completo de Eventos</h3>
               </div>
 
-              <div className="filters-panel" style={{ marginBottom: '20px' }}>
-                <div className="field" style={{ flex: '1 1 300px' }}>
+              <div className="filters-panel filters-panel-eventos" style={{ marginBottom: '20px' }}>
+                <div className="field field-wide">
                   <label htmlFor="employee-search">Buscar Colaborador</label>
                   <div className="input-with-icon">
                     <Search size={16} />
@@ -2036,7 +2068,7 @@ function App() {
                 </button>
               </div>
 
-              <div className="split-tables-container" style={{ display: 'grid', gridTemplateColumns: selectedUserEdit ? '1fr 1.2fr' : '1fr', gap: '20px' }}>
+              <div className={`split-tables-container users-grid ${selectedUserEdit ? 'has-editor' : ''}`}>
                 <div className="table-card">
                   <h3>Usuarios Registrados</h3>
                   <div className="table-responsive">
