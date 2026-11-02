@@ -965,7 +965,7 @@ function App() {
         </div>
 
         <div className="sidebar-device-select">
-          <span className="section-label">Dispositivo Activo</span>
+          <span className="section-label">{currentUser?.role === 'admin' ? 'Dispositivo Activo' : 'Sede Activa'}</span>
           <select 
             className="device-dropdown" 
             value={activeDeviceId} 
@@ -977,11 +977,13 @@ function App() {
           >
              {devices.map((d) => (
                <option key={d.id} value={d.id}>
-                 {d.name} ({d.ip})
+                 {currentUser?.role === 'admin' ? `${d.name} (${d.ip})` : d.name}
                </option>
              ))}
              {devices.length === 0 && (
-               <option value={device.id || 'dev-default'}>{device.name || 'ZKTeco'} ({device.ip})</option>
+               <option value={device.id || 'dev-default'}>
+                 {currentUser?.role === 'admin' ? `${device.name || 'ZKTeco'} (${device.ip})` : (device.name || 'Sede Principal')}
+               </option>
              )}
           </select>
         </div>
@@ -1071,11 +1073,15 @@ function App() {
               )}
             </div>
           )}
-          <div className="sidebar-status">
-            <span className={`status-dot ${isConnected ? 'online' : 'offline'}`} />
-            {isConnected ? 'Dispositivo Online' : 'Dispositivo Offline'}
-          </div>
-          <div>Logs en equipo: {deviceInfo?.logCounts ?? '-'}</div>
+          {currentUser?.role === 'admin' && (
+            <>
+              <div className="sidebar-status">
+                <span className={`status-dot ${isConnected ? 'online' : 'offline'}`} />
+                {isConnected ? 'Dispositivo Online' : 'Dispositivo Offline'}
+              </div>
+              <div>Logs en equipo: {deviceInfo?.logCounts ?? '-'}</div>
+            </>
+          )}
           <div>Última sincro: {fetchedAt ? dateTimeLabel(fetchedAt) : '-'}</div>
           
           <div className="sidebar-theme-toggle">
@@ -1407,16 +1413,24 @@ function App() {
                     <p>Revise el orden cronológico de marcaciones y lecturas recolectadas de manera detallada en el biométrico activo.</p>
                   </div>
 
-                  {(currentUser?.role === 'admin' || (currentUser?.assignedDevices || []).length > 0) && (
+                  {currentUser?.role === 'admin' ? (
                     <div className="card module-card" onClick={openConfigModal}>
                       <div className="module-icon-box" style={{ color: 'var(--text)' }}>
                         <IconConfiguracion size={22} />
                       </div>
                       <h4>Configuración de Biométricos</h4>
                       <p>
-                        {currentUser?.role === 'admin'
-                          ? 'Gestione múltiples relojes biométricos, configure IPs y puertos, y prepare operaciones avanzadas.'
-                          : 'Configure horarios, turnos y minutos de tolerancia de los biométricos que tiene asignados.'}
+                        Gestione múltiples relojes biométricos, configure IPs y puertos, y prepare operaciones avanzadas.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="card module-card" onClick={() => setActiveTab('colaboradores')}>
+                      <div className="module-icon-box" style={{ color: 'var(--text)' }}>
+                        <IconPersonal size={22} />
+                      </div>
+                      <h4>Directorio de Personal</h4>
+                      <p>
+                        Consulte el listado de colaboradores registrados en la sede, edite sus nombres y descargue la lista en PDF.
                       </p>
                     </div>
                   )}
@@ -2157,70 +2171,86 @@ function App() {
         {/* Centered Settings Modal (Two-Column Layout) */}
         {isConfigOpen && (
           <div className="modal-overlay" onClick={() => setIsConfigOpen(false)}>
-            <div className="modal-content config-modal-content" onClick={(e) => e.stopPropagation()}>
+            <div
+              className="modal-content config-modal-content"
+              style={currentUser?.role !== 'admin' ? { height: 'auto', maxHeight: '85vh', width: '640px' } : undefined}
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="modal-header">
                 <div>
-                  <h3 style={{ fontSize: '1.1rem', fontWeight: 800 }}>Administrador de Biométricos</h3>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 800 }}>
+                    {currentUser?.role === 'admin' ? 'Administrador de Biométricos' : 'Ajustar Horarios y Turnos'}
+                  </h3>
                   <p className="modal-subtitle" style={{ fontSize: '0.74rem', color: 'var(--text-soft)', margin: '4px 0 0 0' }}>
-                    Gestione la conexión y los horarios de entrada/salida de cada biométrico.
+                    {currentUser?.role === 'admin'
+                      ? 'Gestione la conexión y los horarios de entrada/salida de cada biométrico.'
+                      : 'Configure los horarios de entrada, salida y minutos de tolerancia de la jornada.'}
                   </p>
                 </div>
                 <button className="close-btn" onClick={() => setIsConfigOpen(false)} aria-label="Cerrar">&times;</button>
               </div>
               
-              <div className="modal-body config-modal-body">
-                {/* Left Panel: Device List */}
-                <div className="modal-devices-sidebar">
-                  <div className="sidebar-list-header">
-                    <span>Dispositivos</span>
-                    {currentUser?.role === 'admin' && (
-                      <button 
-                        className="btn-add-device" 
-                        onClick={addNewDeviceForEdit}
-                        title="Agregar nuevo biométrico"
-                      >
-                        <Plus size={12} /> Nuevo
-                      </button>
-                    )}
-                  </div>
-                  
-                  <div className="devices-list-scroll">
-                    {devices.map((d) => (
-                      <div 
-                        key={d.id} 
-                        className={`device-list-item ${selectedEditDeviceId === d.id ? 'active' : ''} ${activeDeviceId === d.id ? 'current-active' : ''}`}
-                        onClick={() => selectDeviceForEdit(d)}
-                      >
-                        <div className="device-item-info">
-                          <span className="device-item-name">{d.name}</span>
-                          <span className="device-item-ip">{d.ip}</span>
+              <div className="modal-body config-modal-body" style={currentUser?.role !== 'admin' && devices.length <= 1 ? { gridTemplateColumns: '1fr' } : undefined}>
+                {/* Left Panel: Device/Sede List (hidden for operator if only 1 sede assigned) */}
+                {(currentUser?.role === 'admin' || devices.length > 1) && (
+                  <div className="modal-devices-sidebar">
+                    <div className="sidebar-list-header">
+                      <span>{currentUser?.role === 'admin' ? 'Dispositivos' : 'Sedes'}</span>
+                      {currentUser?.role === 'admin' && (
+                        <button 
+                          className="btn-add-device" 
+                          onClick={addNewDeviceForEdit}
+                          title="Agregar nuevo biométrico"
+                        >
+                          <Plus size={12} /> Nuevo
+                        </button>
+                      )}
+                    </div>
+                    
+                    <div className="devices-list-scroll">
+                      {devices.map((d) => (
+                        <div 
+                          key={d.id} 
+                          className={`device-list-item ${selectedEditDeviceId === d.id ? 'active' : ''} ${activeDeviceId === d.id ? 'current-active' : ''}`}
+                          onClick={() => selectDeviceForEdit(d)}
+                        >
+                          <div className="device-item-info">
+                            <span className="device-item-name">{d.name}</span>
+                            {currentUser?.role === 'admin' && (
+                              <span className="device-item-ip">{d.ip}</span>
+                            )}
+                          </div>
+                          <div className="device-item-actions">
+                            {activeDeviceId === d.id && (
+                              <span className="active-badge" title="Activo para reportes">Activo</span>
+                            )}
+                            {currentUser?.role === 'admin' && (
+                              <button 
+                                className="btn-delete-device-item" 
+                                onClick={(e) => handleDeleteDevice(d.id, e)}
+                                title="Eliminar dispositivo"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <div className="device-item-actions">
-                          {activeDeviceId === d.id && (
-                            <span className="active-badge" title="Dispositivo activo para reportes">Activo</span>
-                          )}
-                          {currentUser?.role === 'admin' && (
-                            <button 
-                              className="btn-delete-device-item" 
-                              onClick={(e) => handleDeleteDevice(d.id, e)}
-                              title="Eliminar dispositivo"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                    {devices.length === 0 && (
-                      <div className="empty-devices-msg">No hay dispositivos registrados</div>
-                    )}
+                      ))}
+                      {devices.length === 0 && (
+                        <div className="empty-devices-msg">No hay registros</div>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Right Panel: Selected Device Form */}
                 <div className="modal-device-form-pane">
                   <div className="form-pane-header">
-                    <h4>{selectedEditDeviceId === 'new' ? 'Nuevo Dispositivo' : 'Editar Dispositivo'}</h4>
+                    <h4>
+                      {currentUser?.role === 'admin'
+                        ? (selectedEditDeviceId === 'new' ? 'Nuevo Dispositivo' : 'Editar Dispositivo')
+                        : `Jornada — ${editName || 'Sede Activa'}`}
+                    </h4>
                   </div>
                   
                   <div className="form-pane-scroll">
@@ -2293,84 +2323,82 @@ function App() {
                       </div>
                     </div>
 
-                    {/* General Settings Section */}
-                    <div className="form-card-section">
-                      <div className="card-section-title">Conexión y Red</div>
-                      <div className="fields-row-grid">
-                        <div className="field">
-                          <label htmlFor="edit-name">Nombre del Equipo</label>
-                          <input
-                            id="edit-name"
-                            type="text"
-                            placeholder="Ej. Oficina Central"
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                            disabled={currentUser?.role !== 'admin'}
-                          />
-                        </div>
-                        <div className="field">
-                          <label htmlFor="edit-model">Modelo</label>
-                          <select
-                            id="edit-model"
-                            className="device-dropdown select-input"
-                            style={{ padding: '8px 12px', height: '38px' }}
-                            value={editModel}
-                            onChange={(e) => setEditModel(e.target.value)}
-                            disabled={currentUser?.role !== 'admin'}
-                          >
-                            <option value="WL20/EWL20">WL20/EWL20</option>
-                            <option value="F22">F22</option>
-                            <option value="MB160">MB160</option>
-                            <option value="iClock">iClock Series</option>
-                            <option value="K40">K40 / K20</option>
-                          </select>
-                        </div>
-                      </div>
-                      
-                      <div className="fields-row-grid" style={{ marginTop: '10px' }}>
-                        <div className="field">
-                          <label htmlFor="edit-ip">Dirección IP</label>
-                          <input
-                            id="edit-ip"
-                            type="text"
-                            placeholder="192.168.1.100"
-                            value={editIp}
-                            onChange={(e) => setEditIp(e.target.value)}
-                            disabled={currentUser?.role !== 'admin'}
-                          />
-                        </div>
-                        <div className="field">
-                          <label htmlFor="edit-port">Puerto</label>
-                          <input
-                            id="edit-port"
-                            type="number"
-                            value={editPort}
-                            onChange={(e) => setEditPort(Number(e.target.value))}
-                            disabled={currentUser?.role !== 'admin'}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Connection Test Button and Results */}
-                      <div className="connection-test-container">
-                        <button
-                          type="button"
-                          className="btn-action btn-action-secondary btn-test-conn"
-                          onClick={handleTestConnection}
-                          disabled={testingConnection || !editIp}
-                        >
-                          <RefreshCw size={12} className={testingConnection ? 'spin' : ''} />
-                          {testingConnection ? 'Probando...' : 'Probar Conexión'}
-                        </button>
-                        
-                        {testResult && (
-                          <div className={`test-feedback-box ${testResult.ok ? 'success' : 'error'}`}>
-                            <span className="feedback-icon">{testResult.ok ? '✓' : '✗'}</span>
-                            <span className="feedback-text">{testResult.message}</span>
+                    {/* General Settings Section (SOLO ADMIN) */}
+                    {currentUser?.role === 'admin' && (
+                      <div className="form-card-section">
+                        <div className="card-section-title">Conexión y Red</div>
+                        <div className="fields-row-grid">
+                          <div className="field">
+                            <label htmlFor="edit-name">Nombre del Equipo</label>
+                            <input
+                              id="edit-name"
+                              type="text"
+                              placeholder="Ej. Oficina Central"
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                            />
                           </div>
-                        )}
+                          <div className="field">
+                            <label htmlFor="edit-model">Modelo</label>
+                            <select
+                              id="edit-model"
+                              className="device-dropdown select-input"
+                              style={{ padding: '8px 12px', height: '38px' }}
+                              value={editModel}
+                              onChange={(e) => setEditModel(e.target.value)}
+                            >
+                              <option value="WL20/EWL20">WL20/EWL20</option>
+                              <option value="F22">F22</option>
+                              <option value="MB160">MB160</option>
+                              <option value="iClock">iClock Series</option>
+                              <option value="K40">K40 / K20</option>
+                            </select>
+                          </div>
+                        </div>
+                        
+                        <div className="fields-row-grid" style={{ marginTop: '10px' }}>
+                          <div className="field">
+                            <label htmlFor="edit-ip">Dirección IP</label>
+                            <input
+                              id="edit-ip"
+                              type="text"
+                              placeholder="192.168.1.100"
+                              value={editIp}
+                              onChange={(e) => setEditIp(e.target.value)}
+                            />
+                          </div>
+                          <div className="field">
+                            <label htmlFor="edit-port">Puerto</label>
+                            <input
+                              id="edit-port"
+                              type="number"
+                              value={editPort}
+                              onChange={(e) => setEditPort(Number(e.target.value))}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Connection Test Button and Results */}
+                        <div className="connection-test-container">
+                          <button
+                            type="button"
+                            className="btn-action btn-action-secondary btn-test-conn"
+                            onClick={handleTestConnection}
+                            disabled={testingConnection || !editIp}
+                          >
+                            <RefreshCw size={12} className={testingConnection ? 'spin' : ''} />
+                            {testingConnection ? 'Probando...' : 'Probar Conexión'}
+                          </button>
+                          
+                          {testResult && (
+                            <div className={`test-feedback-box ${testResult.ok ? 'success' : 'error'}`}>
+                              <span className="feedback-icon">{testResult.ok ? '✓' : '✗'}</span>
+                              <span className="feedback-text">{testResult.message}</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               </div>
