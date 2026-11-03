@@ -1,4 +1,5 @@
 const MINUTE = 60 * 1000;
+const PUNCH_ATTEMPT_WINDOW = 5 * MINUTE;
 
 export function todayInputValue() {
   return toInputDate(new Date());
@@ -135,9 +136,20 @@ export function buildEmployeeTotals(rows) {
 }
 
 function calculateDay(day, settings) {
-  const punches = day.punches.sort((a, b) => a - b);
-  const firstPunch = punches[0] || null;
-  const lastPunch = punches[punches.length - 1] || null;
+  const punches = [...day.punches].sort((a, b) => a - b);
+  const attempts = [];
+  for (const punch of punches) {
+    const previous = attempts[attempts.length - 1];
+    // Anchor to the first mark so repeated attempts cannot extend a group indefinitely.
+    if (previous && punch - previous.first <= PUNCH_ATTEMPT_WINDOW) {
+      previous.last = punch;
+    } else {
+      attempts.push({ first: punch, last: punch });
+    }
+  }
+  const hasPair = attempts.length > 1;
+  const firstPunch = attempts[0]?.first || null;
+  const lastPunch = hasPair ? attempts[attempts.length - 1].last : null;
   
   const date = parseInputDate(day.dateKey);
   const isSaturday = date.getDay() === 6;
@@ -147,7 +159,6 @@ function calculateDay(day, settings) {
   const scheduledStart = parseDateTime(day.dateKey, shiftStart);
   const scheduledEnd = normalizeShiftEnd(day.dateKey, shiftStart, shiftEnd);
   const graceMinutes = Number(settings.graceMinutes || 0);
-  const hasPair = punches.length > 1;
 
   const workedMinutes = hasPair
     ? Math.max(0, minutesBetween(firstPunch, lastPunch))
@@ -161,7 +172,7 @@ function calculateDay(day, settings) {
     : 0;
   const earlyLeaveMinutes = hasPair ? Math.max(0, minutesBetween(lastPunch, scheduledEnd)) : 0;
   const isEarlyLeave = earlyLeaveMinutes > 0;
-  const isIncomplete = punches.length === 1;
+  const isIncomplete = !hasPair;
 
   const status = isIncomplete
     ? 'Incompleto'
@@ -175,9 +186,12 @@ function calculateDay(day, settings) {
 
   return {
     ...day,
+    punches,
     firstPunch,
     lastPunch,
     punchCount: punches.length,
+    effectivePunchCount: attempts.length,
+    duplicatePunchCount: punches.length - attempts.length,
     workedMinutes,
     scheduledMinutes,
     lateMinutes,

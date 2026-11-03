@@ -65,3 +65,78 @@ test('Saturday uses the same 50-minute threshold after its scheduled exit', asyn
 test('single late punch never produces overtime', async () => {
   assert.equal((await calculate(['20:00'])).overtimeMinutes, 0);
 });
+
+test('two entry attempts within five minutes remain an incomplete day', async () => {
+  for (const times of [['07:55', '08:00'], ['08:00:01', '08:00:59'], ['08:00', '08:00']]) {
+    const row = await calculate(times);
+    assert.equal(row.status, 'Incompleto');
+    assert.equal(row.lastPunch, null);
+    assert.equal(row.workedMinutes, 0);
+    assert.equal(row.isLate, false);
+    assert.equal(row.isEarlyLeave, false);
+    assert.equal(row.overtimeMinutes, 0);
+    assert.equal(row.punchCount, 2);
+    assert.equal(row.effectivePunchCount, 1);
+    assert.equal(row.duplicatePunchCount, 1);
+  }
+});
+
+test('a later departure completes the day without moving the first entry', async () => {
+  const row = await calculate(['18:00', '08:00', '07:55']);
+  assert.equal(row.firstPunch.getHours(), 7);
+  assert.equal(row.firstPunch.getMinutes(), 55);
+  assert.equal(row.lastPunch.getHours(), 18);
+  assert.equal(row.status, 'A tiempo');
+  assert.equal(row.workedMinutes, 605);
+  assert.equal(row.effectivePunchCount, 2);
+  assert.equal(row.punchCount, 3);
+});
+
+test('repeated departure attempts retain the final departure and overtime threshold', async () => {
+  const row = await calculate(['08:30', '08:32', '18:48', '18:50']);
+  assert.equal(row.effectivePunchCount, 2);
+  assert.equal(row.lastPunch.getMinutes(), 50);
+  assert.equal(row.overtimeMinutes, 60);
+  assert.equal(row.workedMinutes, 620);
+});
+
+test('two late entry attempts do not create an early departure or overtime', async () => {
+  const row = await calculate(['19:00', '19:04']);
+  assert.equal(row.isIncomplete, true);
+  assert.equal(row.isEarlyLeave, false);
+  assert.equal(row.isLate, false);
+  assert.equal(row.overtimeMinutes, 0);
+});
+
+test('attempt window uses exact seconds and does not chain beyond five minutes', async () => {
+  assert.equal((await calculate(['08:00:00', '08:05:00'])).effectivePunchCount, 1);
+  assert.equal((await calculate(['08:00:00', '08:05:01'])).effectivePunchCount, 2);
+  assert.equal((await calculate(['08:00', '08:04', '08:08', '08:12'])).effectivePunchCount, 2);
+});
+
+test('grouping does not cross employees or workdays and leaves original events untouched', async () => {
+  const { buildDailySummary, buildEmployeeTotals } = await modulePromise;
+  const events = [
+    { employeeId: '1', timestamp: '2026-11-02T08:00:00' },
+    { employeeId: '1', timestamp: '2026-11-02T08:03:00' },
+    { employeeId: '2', timestamp: '2026-11-02T08:02:00' },
+    { employeeId: '1', timestamp: '2026-11-03T08:01:00' },
+  ];
+  const original = JSON.stringify(events);
+  const rows = buildDailySummary(events, [], settings);
+  assert.equal(rows.length, 3);
+  assert.ok(rows.every(row => row.isIncomplete));
+  assert.equal(buildEmployeeTotals(rows).reduce((sum, row) => sum + row.earlyLeaveCount, 0), 0);
+  assert.equal(JSON.stringify(events), original);
+});
+
+test('duplicate attempts in a night shift share the same workday', async () => {
+  const { buildDailySummary } = await modulePromise;
+  const events = ['2026-11-02T22:00:00', '2026-11-02T22:04:00', '2026-11-03T05:58:00', '2026-11-03T06:00:00']
+    .map(timestamp => ({ employeeId: '1', timestamp }));
+  const [row] = buildDailySummary(events, [], { ...settings, shiftStart: '22:00', shiftEnd: '06:00' });
+  assert.equal(row.dateKey, '2026-11-02');
+  assert.equal(row.effectivePunchCount, 2);
+  assert.equal(row.workedMinutes, 480);
+  assert.equal(row.status, 'A tiempo');
+});

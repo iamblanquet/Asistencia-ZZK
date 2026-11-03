@@ -43,6 +43,8 @@ Instalar dependencias con npm ci (o npm ci --omit=dev en el servidor). better-sq
 
 ## Pruebas
 
+Las checadas de un empleado en la misma jornada se agrupan en intentos de hasta cinco minutos desde la primera marca del grupo (limite inclusivo, sin encadenar ventanas). Un solo intento deja la jornada incompleta, sin salida, horas trabajadas, salida temprana ni horas extra. Con dos o mas intentos se conserva la primera entrada y la ultima salida real. Las marcaciones originales permanecen en SQL y en la bitacora; esta agrupacion solo afecta los calculos y reportes, no la tolerancia de entrada.
+
 Las horas extra se calculan por empleado y jornada desde la salida programada. Cada hora se reconoce al alcanzar 50 minutos: 49 minutos generan cero, 50 generan una hora, 109 generan una y 110 generan dos. Los sobrantes no se trasladan a otros dias ni empleados: 20 minutos un dia y 40 al siguiente no generan horas extra. La tolerancia sigue aplicando solamente a la entrada. Este resultado es calculado; las marcaciones originales no se alteran.
 
 node --test server/sqlite-isolation.test.js server/source-attendance.test.js server/cached-attendance.test.js server/zk-tcp-download.test.js
