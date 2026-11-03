@@ -49,7 +49,8 @@ async function readEnrollmentUsers(device) {
     for (let offset = 0; offset < buffer.length; offset += 72) {
       const user = decodeUserData72(buffer.subarray(offset, offset + 72));
       userHashes.set(user.uid, crypto.createHash('sha256').update(buffer.subarray(offset, offset + 72)).digest('hex'));
-      users.push({ uid: user.uid, employeeId: String(user.userId), name: user.name, role: user.role, cardNo: user.cardno });
+      const name = buffer.subarray(offset + 11, offset + 35).toString('utf8').split('\0')[0];
+      users.push({ uid: user.uid, employeeId: String(user.userId), name, role: user.role, cardNo: user.cardno });
     }
     usersHash = crypto.createHash('sha256').update(userData).digest('hex');
   } finally { userData.fill(0); }

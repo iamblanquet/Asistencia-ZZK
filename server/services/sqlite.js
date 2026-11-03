@@ -60,6 +60,17 @@ db.exec(`
     result TEXT CHECK(result IS NULL OR json_valid(result))
   );
   CREATE INDEX IF NOT EXISTS enrollment_device_created ON enrollment_jobs(device_id,created_at);
+  CREATE TABLE IF NOT EXISTS employee_device_status (
+    device_id TEXT NOT NULL, employee_id TEXT NOT NULL, present INTEGER NOT NULL CHECK(present IN (0,1)),
+    checked_at TEXT NOT NULL, PRIMARY KEY(device_id,employee_id),
+    FOREIGN KEY(device_id,employee_id) REFERENCES employees(device_id,employee_id)
+  );
+  CREATE TABLE IF NOT EXISTS device_user_actions (
+    id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id), employee_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('rename','delete')),
+    status TEXT NOT NULL, created_at TEXT NOT NULL, finished_at TEXT,
+    details TEXT NOT NULL CHECK(json_valid(details))
+  );
 `);
 
 function legacy(name, fallback) {

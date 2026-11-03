@@ -306,7 +306,7 @@ function buildEmployeeIndex(employees) {
   const index = new Map();
 
   for (const employee of employees) {
-    for (const key of [employee.employeeId, employee.uid]) {
+    for (const key of [employee.employeeId, ...(employee.devicePresent === false ? [] : [employee.uid])]) {
       const normalizedKey = cleanValue(key);
       if (normalizedKey) {
         index.set(normalizedKey, employee);

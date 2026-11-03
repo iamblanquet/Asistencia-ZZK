@@ -21,6 +21,7 @@ const { getSavedAttendance } = require('./services/attendanceStore');
 const { syncAttendance } = require('./services/syncAttendance');
 const { db } = require('./services/sqlite');
 const { createEnrollmentManager } = require('./services/enrollment');
+const { createDeviceUserManager } = require('./services/deviceUsers');
 const { getRealtimeStatus, startRealtime, stopRealtime } = require('./services/realtime');
 const {
   authenticate,
@@ -33,8 +34,12 @@ const {
 } = require('./services/auth');
 
 const app = express();
+let deviceUsers;
 const enrollments = createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeStatus, saveEmployees,
+  isDeviceBusy: deviceId => deviceUsers?.isBusy(deviceId),
   reservedEmployeeIds: deviceId => getEmployees(deviceId).map(employee => employee.employeeId) });
+deviceUsers = createDeviceUserManager({ db, withDevice, getDeviceById, getRealtimeStatus, saveEmployees,
+  isEnrollmentBusy: deviceId => enrollments.isBusy(deviceId) });
 const port = Number(process.env.API_PORT || 5174);
 
 app.use(cors({ origin: true }));
@@ -114,6 +119,24 @@ app.get('/api/device/fingerprints', requireAdmin, async (req, res, next) => {
   if (!device) return;
   try { res.json(await enrollments.inspect(device, req.query.employeeId)); } catch (error) { next(error); }
 });
+app.get('/api/device/users/:id', requireAdmin, async (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try { res.json(await deviceUsers.preview(device, req.user.id, req.params.id)); } catch (error) { next(error); }
+});
+function deviceUserAction(action) {
+  return async (req, res, next) => {
+    const device = enrollmentDevice(req, res);
+    if (!device) return;
+    try { res.json(await deviceUsers.execute(device, req.user.id, req.params.id, action, req.body)); }
+    catch (error) {
+      if (error.needsAttention) return res.status(503).json({ ok: false, message: error.publicMessage, needsAttention: true });
+      next(error);
+    }
+  };
+}
+app.put('/api/device/users/:id', requireAdmin, deviceUserAction('rename'));
+app.delete('/api/device/users/:id', requireAdmin, deviceUserAction('delete'));
 app.get('/api/device/enrollment-next-id', requireAdmin, async (req, res, next) => {
   const device = enrollmentDevice(req, res);
   if (!device) return;
@@ -322,7 +345,7 @@ app.get('/api/device/realtime/status', (req, res) => {
 });
 
 app.post('/api/device/realtime/start', async (req, res) => {
-  if (enrollments.isBusy(req.query.deviceId)) return res.status(409).json({ message: 'Espere a que termine el registro de huella.' });
+  if (enrollments.isBusy(req.query.deviceId) || deviceUsers.isBusy(req.query.deviceId)) return res.status(409).json({ message: 'Espere a que termine la operacion en el biometrico.' });
   const device = getRequestDevice(req);
   if (!device) {
     return res.status(404).json({ ok: false, message: 'Dispositivo no encontrado o acceso denegado.' });
@@ -458,8 +481,10 @@ const server = app.listen(port, process.env.HOST || '127.0.0.1', () => {
 process.once('SIGTERM', async () => {
   nightlyTask?.stop();
   const timeout = setTimeout(() => process.exit(1), 25000);
-  await enrollments.shutdown();
-  server.close(() => { clearTimeout(timeout); process.exit(0); });
+  const closed = new Promise(resolve => server.close(resolve));
+  await Promise.all([closed, enrollments.shutdown(), deviceUsers.shutdown()]);
+  clearTimeout(timeout);
+  process.exit(0);
 });
 }
 

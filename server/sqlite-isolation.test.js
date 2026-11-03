@@ -40,6 +40,20 @@ test('names and schedules change only for their biometric', () => {
   assert.equal(devices.getDeviceById('b').shiftEnd, '15:00');
   assert.throws(() => devices.updateEmployeeName('', '1', 'Wrong'));
 });
+
+test('a deleted device user remains available for historical attendance and automatic ID protection', () => {
+  const before = events.getStoredEvents('a').length;
+  devices.saveEmployees('a', []);
+  assert.equal(devices.getEmployees('a')[0].devicePresent, false);
+  assert.equal(devices.getEmployees('a')[0].employeeId, '1');
+  assert.equal(events.getStoredEvents('a').length, before);
+  assert.equal(events.getStoredEvents('a')[0].employeeName, 'Ana editada');
+  assert.notEqual(devices.getEmployees('b')[0].devicePresent, false);
+  devices.saveEmployees('a', [{ employeeId: '1', name: 'Ana A', uid: '1', role: 0 }]);
+  assert.equal(devices.getEmployees('a')[0].devicePresent, true);
+  assert.equal(devices.getEmployees('a')[0].name, 'Ana editada');
+  assert.deepEqual(db.pragma('foreign_key_check'), []);
+});
 test('events deduplicate within a device across sources, never across devices', () => {
   const event = { employeeId: '1', timestamp: '2026-10-30T18:00:00Z' };
   assert.equal(events.addStoredEvents('a', [event], 'import').length, 1);

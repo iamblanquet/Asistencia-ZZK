@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { preferredDevice, rememberDevice } from './utils/deviceSelection';
 import FingerprintEnrollment from './components/FingerprintEnrollment';
+import DeviceUserAction from './components/DeviceUserAction';
 import {
   AlertTriangle,
   ArrowDownWideNarrow,
@@ -137,6 +138,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('general');
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [enrollmentEmployee, setEnrollmentEmployee] = useState(null);
+  const [deviceUserAction, setDeviceUserAction] = useState(null);
   const [range, setRange] = useState({ from: defaultFrom, to: defaultTo });
   const [schedule, setSchedule] = useState(initialSchedule);
   const [employees, setEmployees] = useState([]);
@@ -417,6 +419,7 @@ function App() {
 
   const filteredEmployees = useMemo(() => {
     return employees.filter(emp => {
+      if (emp.devicePresent === false) return false;
       const q = employeeQuery.toLowerCase().trim();
       if (!q) return true;
       return String(emp.employeeId).toLowerCase().includes(q) || String(emp.name).toLowerCase().includes(q);
@@ -838,7 +841,7 @@ function App() {
     doc.line(40, 74, 572, 74);
 
     const headers = ['ID', 'Nombre Completo', 'Rol', 'No. Tarjeta'];
-    const body = employees.map((emp) => [
+    const body = employees.filter(emp => emp.devicePresent !== false).map((emp) => [
       emp.employeeId,
       emp.name,
       emp.role === 14 ? 'Administrador' : 'Usuario Normal',
@@ -1983,6 +1986,7 @@ function App() {
                         <th>Nombre Completo</th>
                         <th style={{ width: '150px' }}>Rol</th>
                         <th style={{ width: '150px' }}>No. Tarjeta</th>
+                        {currentUser?.role === 'admin' && <th style={{ width: '100px' }}>Acciones</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -2050,7 +2054,7 @@ function App() {
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                   <span style={{ fontWeight: '600', color: 'var(--text)' }}>{emp.name}</span>
-                                  <button
+                                  {currentUser?.role !== 'admin' && <button
                                     style={{
                                       color: 'var(--primary)',
                                       background: 'none',
@@ -2072,7 +2076,7 @@ function App() {
                                     title="Editar nombre en plataforma"
                                   >
                                     <Edit size={13} />
-                                  </button>
+                                  </button>}
                                 </div>
                               </div>
                             )}
@@ -2085,11 +2089,15 @@ function App() {
                           <td style={{ color: 'var(--text-soft)', fontFamily: 'monospace', fontSize: '0.88rem' }}>
                             {emp.cardNo || '-'}
                           </td>
+                          {currentUser?.role === 'admin' && <td><div className="device-user-row-actions">
+                            <button type="button" title="Editar nombre en el biométrico" aria-label={`Editar nombre del ID ${emp.employeeId} en el biométrico`} onClick={() => setDeviceUserAction({ employee: emp, action: 'rename' })}><Edit size={16} /></button>
+                            <button type="button" title={emp.role !== 0 ? 'Usuario con privilegios protegido' : 'Eliminar usuario y huellas del biométrico'} aria-label={`Eliminar ID ${emp.employeeId} del biométrico`} disabled={emp.role !== 0} className="is-danger" onClick={() => setDeviceUserAction({ employee: emp, action: 'delete' })}><Trash2 size={16} /></button>
+                          </div></td>}
                         </tr>
                       ))}
                       {!filteredEmployees.length && (
                         <tr>
-                          <td colSpan="4" className="empty-cell">Sin colaboradores registrados en el biométrico activo</td>
+                          <td colSpan={currentUser?.role === 'admin' ? 5 : 4} className="empty-cell">Sin colaboradores registrados en el biométrico activo</td>
                         </tr>
                       )}
                     </tbody>
@@ -2313,11 +2321,16 @@ function App() {
         </div>
 
         {/* Centered Settings Modal (Two-Column Layout) */}
+        {deviceUserAction && currentUser?.role === 'admin' && devices.some(item => item.id === activeDeviceId) && <DeviceUserAction
+          key={`${activeDeviceId}:${deviceUserAction.employee.employeeId}:${deviceUserAction.action}`}
+          device={devices.find(item => item.id === activeDeviceId)} employee={deviceUserAction.employee} action={deviceUserAction.action}
+          getJson={getJson} apiRequest={apiRequest} onClose={() => setDeviceUserAction(null)} onSaved={() => loadEvents(currentView.current.range, activeDeviceId)}
+        />}
         {enrollmentEmployee !== null && currentUser?.role === 'admin' && devices.some(item => item.id === activeDeviceId) && (
           <FingerprintEnrollment
             key={activeDeviceId}
             device={devices.find(item => item.id === activeDeviceId)}
-            employees={employees}
+            employees={employees.filter(employee => employee.devicePresent !== false)}
             initialEmployeeId={enrollmentEmployee}
             getJson={getJson}
             apiRequest={apiRequest}

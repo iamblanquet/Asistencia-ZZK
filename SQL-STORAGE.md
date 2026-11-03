@@ -77,6 +77,30 @@ y `/api/device/enrollments` requieren administrador y `deviceId` explicito.
 Los estados activos se recuperan al reabrir el dialogo. Un reinicio abrupto los marca para
 revision; el apagado normal intenta cancelar la captura y restaurar el reloj antes de salir.
 
+## Administracion de usuarios del reloj
+
+En Personal, los administradores pueden editar el nombre o eliminar un usuario del F22/F22ID.
+La consulta previa `/api/device/users/:id?deviceId=...` es de lectura y devuelve nombre, rol,
+numero de huellas y un token opaco de confirmacion de cinco minutos, ligado a administrador,
+biometrico y empleado. No devuelve contrasenas, tarjetas completas, plantillas ni hashes.
+Editar (`PUT`) o eliminar (`DELETE`) exige ese token y confirmacion explicita. El borrado
+ademas exige escribir exactamente el ID y aceptar la perdida de las huellas del reloj.
+No se permite eliminar usuarios con privilegios. No existe borrado masivo ni borrado de logs.
+
+El nombre se modifica copiando el registro binario original de 72 bytes y cambiando solo
+sus 24 bytes de nombre, conservando ID, UID, rol, tarjeta, contrasena y otros campos.
+Se verifica despues que el registro esperado y todas las huellas coincidan. El borrado
+envia un unico UID y verifica que desaparezcan solo ese usuario y sus huellas.
+Las acciones comparten la cola de conexiones con la sincronizacion y el registro de huellas.
+No se admiten operaciones simultaneas ni lecturas en tiempo real sobre el mismo equipo.
+
+`device_user_actions` conserva auditoria de actor, accion, dispositivo, empleado y resultado.
+Una desconexion posterior a enviar la orden se marca `needs_attention`, nunca exito supuesto.
+`employee_device_status` identifica empleados presentes en la ultima lista verificada del
+reloj. Los ausentes dejan de aparecer en Personal, pero sus filas SQL, nombres, asistencias
+y reservas de ID se conservan. Los informes historicos siguen funcionando. Sincronizar no
+reimporta como usuarios activos las marcaciones historicas de una persona eliminada.
+
 ## Migracion de archivos anteriores
 
 En el primer arranque se respaldan los archivos JSON/DB antiguos en server/data/pre-sqlite-* y se importan dentro de una unica transaccion. Un error aborta la migracion. Las claves existentes se conservan; los nuevos usuarios usan scrypt. No se modifica el reloj.
@@ -99,6 +123,6 @@ Las checadas de un empleado en la misma jornada se agrupan en intentos de hasta 
 
 Las horas extra se calculan por empleado y jornada desde la salida programada. Cada hora se reconoce al alcanzar 50 minutos: 49 minutos generan cero, 50 generan una hora, 109 generan una y 110 generan dos. Los sobrantes no se trasladan a otros dias ni empleados: 20 minutos un dia y 40 al siguiente no generan horas extra. La tolerancia sigue aplicando solamente a la entrada. Este resultado es calculado; las marcaciones originales no se alteran.
 
-node --test server/sqlite-isolation.test.js server/source-attendance.test.js server/cached-attendance.test.js server/zk-tcp-download.test.js server/device-selection.test.js server/nightly-sync.test.js server/enrollment.test.js
+node --test server/sqlite-isolation.test.js server/source-attendance.test.js server/cached-attendance.test.js server/zk-tcp-download.test.js server/device-selection.test.js server/nightly-sync.test.js server/enrollment.test.js server/device-users.test.js
 
 Las pruebas usan datos temporales y no conectan al reloj. Comprueban migracion, IDs repetidos, permisos, nombres, horarios, deduplicacion, reapertura y conservacion de historial.

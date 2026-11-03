@@ -34,10 +34,26 @@ function updateEmployeeName(deviceId, employeeId, name) {
   return { deviceId, employeeId, name };
 }
 function saveEmployees(deviceId, values) {
-  db.transaction(() => { for (const value of values) employee(deviceId, value); })();
+  // Callers provide a complete verified roster; missing employees remain historical.
+  db.transaction(() => {
+    const checkedAt = new Date().toISOString();
+    db.prepare(`INSERT INTO employee_device_status(device_id,employee_id,present,checked_at)
+      SELECT device_id,employee_id,0,? FROM employees WHERE device_id=?
+      ON CONFLICT(device_id,employee_id) DO UPDATE SET present=0,checked_at=excluded.checked_at`).run(checkedAt, deviceId);
+    const present = db.prepare(`INSERT INTO employee_device_status(device_id,employee_id,present,checked_at) VALUES (?,?,1,?)
+      ON CONFLICT(device_id,employee_id) DO UPDATE SET present=1,checked_at=excluded.checked_at`);
+    for (const value of values) {
+      employee(deviceId, value);
+      present.run(deviceId, String(value.employeeId), checkedAt);
+    }
+  })();
 }
 function getEmployees(deviceId) {
   if (!deviceId) throw new Error('Biometrico requerido.');
-  return db.prepare('SELECT employee_id AS employeeId, COALESCE(override_name,name) AS name, uid,role,card_no AS cardNo FROM employees WHERE device_id=? ORDER BY employee_id').all(String(deviceId));
+  return db.prepare(`SELECT e.employee_id AS employeeId,COALESCE(e.override_name,e.name) AS name,
+    e.uid,e.role,e.card_no AS cardNo,s.present AS devicePresent
+    FROM employees e LEFT JOIN employee_device_status s ON s.device_id=e.device_id AND s.employee_id=e.employee_id
+    WHERE e.device_id=? ORDER BY e.employee_id`).all(String(deviceId))
+    .map(value => ({ ...value, devicePresent: value.devicePresent === null ? null : Boolean(value.devicePresent) }));
 }
 module.exports = { getDevices, getDeviceById, addDevice, updateDevice, deleteDevice, getEmployeeOverrides, updateEmployeeName, saveEmployees, getEmployees };

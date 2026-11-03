@@ -3,7 +3,7 @@ const { enrollmentError, validateEnrollment, nextEmployeeId, readEnrollmentUsers
 const TERMINAL = new Set(['completed', 'cancelled', 'timeout', 'failed', 'needs_attention']);
 
 function createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeStatus, saveEmployees,
-  capture = captureFingerprint, read = readEnrollmentSnapshot, readUsers = readEnrollmentUsers, reservedEmployeeIds = () => [] }) {
+  capture = captureFingerprint, read = readEnrollmentSnapshot, readUsers = readEnrollmentUsers, reservedEmployeeIds = () => [], isDeviceBusy = () => false }) {
   const running = new Map();
   const clock = () => new Date().toISOString();
   db.prepare(`UPDATE enrollment_jobs SET status='needs_attention',message=?,updated_at=?,finished_at=?
@@ -26,7 +26,7 @@ function createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeSta
         changes.deadline || current.deadline, Object.keys(result).length ? JSON.stringify(result) : null, id);
   }
   function assertAvailable(device) {
-    if (running.has(device.id)) throw enrollmentError('Ya hay un registro de huella en curso en este biometrico.');
+    if (running.has(device.id) || isDeviceBusy(device.id)) throw enrollmentError('Ya hay una operacion en curso en este biometrico.');
     const realtime = getRealtimeStatus(device.id);
     if (realtime.active || realtime.connecting) throw enrollmentError('Detenga la lectura en tiempo real antes de registrar huellas.');
   }

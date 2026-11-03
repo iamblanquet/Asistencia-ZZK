@@ -170,6 +170,7 @@ test('fingerprint endpoints are administrator-only and always require biometric 
   const auth = { ...headers, Authorization: 'Bearer ' + authenticate('finger-operator', password).token };
   const before = connectCalls;
   for (const [path, method] of [['/api/device/fingerprints?deviceId=a&employeeId=1', 'GET'],
+    ['/api/device/users/1?deviceId=a', 'GET'], ['/api/device/users/1?deviceId=a', 'PUT'], ['/api/device/users/1?deviceId=a', 'DELETE'],
     ['/api/device/enrollment-next-id?deviceId=a', 'GET'],
     ['/api/device/enrollments?deviceId=a', 'POST'], ['/api/device/enrollments?deviceId=a', 'GET'],
     ['/api/device/enrollments/unknown/cancel?deviceId=a', 'POST']]) {

@@ -1142,8 +1142,19 @@ button:disabled {
 .enrollment-feedback span { color: var(--text-soft); font-size: 12px; }
 .enrollment-feedback.is-success { color: var(--success); }
 .enrollment-error { color: var(--danger); }
-.enrollment-actions { justify-content: flex-end; margin-top: 18px; }
+.enrollment-actions { justify-content: flex-end; flex-wrap: wrap; margin-top: 18px; }
 .enrollment-modal :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.device-user-row-actions { display: flex; gap: 8px; }
+.device-user-row-actions button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 5px; color: var(--primary); background: var(--surface-alt); cursor: pointer; }
+.device-user-row-actions button.is-danger { color: var(--danger); }
+.device-user-row-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
+.device-user-row-actions button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.device-user-summary { display: grid; gap: 6px; margin-bottom: 16px; font-size: 13px; overflow-wrap: anywhere; }
+.device-user-summary span { color: var(--text-soft); font-size: 12px; }
+.device-user-warning { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 14px; padding-block: 12px; border-block: 1px solid var(--border); color: var(--danger); font-size: 12px; line-height: 1.6; }
+.device-user-warning svg { flex-shrink: 0; }
+.btn-device-delete { background: var(--danger); color: #ffffff; border-color: var(--danger); }
 
 @media (max-width: 768px) {
   .active-device-label {
