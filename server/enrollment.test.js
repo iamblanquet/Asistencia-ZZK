@@ -4,7 +4,7 @@ const { EventEmitter } = require('node:events');
 const Database = require('better-sqlite3');
 const { COMMANDS: C } = require('zklib-js/constants');
 const { createTCPHeader } = require('zklib-js/utils');
-const { captureFingerprint, validateEnrollment, commandChannel, readEnrollmentSnapshot } = require('./services/zkEnrollment');
+const { captureFingerprint, validateEnrollment, nextEmployeeId, commandChannel, readEnrollmentSnapshot } = require('./services/zkEnrollment');
 const { createEnrollmentManager } = require('./services/enrollment');
 const input = { employeeId: '20', fingerIndex: 3, createEmployee: false, consent: true, confirmed: true };
 const existing = { uid: 6, employeeId: '20', name: 'Mauricio Blanquet', role: 0, cardNo: 0 };
@@ -38,6 +38,17 @@ test('requires explicit confirmation, consent, a canonical ID and a valid finger
   }
   assert.throws(() => validateEnrollment({ ...input, createEmployee: true, name: '' }));
   assert.throws(() => validateEnrollment({ ...input, createEmployee: true, name: 'ñ'.repeat(13) }));
+  const automatic = validateEnrollment({ ...input, employeeId: undefined, createEmployee: true, name: 'New employee' });
+  assert.equal(automatic.employeeId, '');
+  assert.equal(validateEnrollment({ ...input, employeeId: '999', createEmployee: true, name: 'New employee' }).employeeId, '');
+});
+
+test('automatic IDs advance past both device users and historical employee IDs', () => {
+  assert.equal(nextEmployeeId([]), '1');
+  assert.equal(nextEmployeeId([{ employeeId: '1' }, { employeeId: '20' }, { employeeId: '56' }]), '57');
+  assert.equal(nextEmployeeId([{ employeeId: '20' }], ['610', '56', '0010']), '611');
+  assert.equal(nextEmployeeId([{ employeeId: '20' }], ['archived-name']), '21');
+  assert.throws(() => nextEmployeeId([{ employeeId: '999999999' }]), /limite/);
 });
 
 test('an accepted start is not success until the selected slot is stored and verified', async () => {
@@ -93,7 +104,7 @@ test('new employees are created as normal users and verified before capture', as
   const before = snapshot({ users: [old], usersHash: 'old', userHashes: new Map([[1, 'old-user']]), templates: new Map([['1:0', 'old-print']]) });
   const added = snapshot({ users: [old, existing], userHashes: new Map([[1, 'old-user'], [6, 'new-user']]), templates: before.templates });
   // The next UID is selected on the clock, not accepted from a browser request.
-  added.users = [old, { ...existing, uid: 2 }];
+  added.users = [old, { ...existing, uid: 2, employeeId: '101' }];
   added.userHashes = new Map([[1, 'old-user'], [2, 'new-user']]);
   const after = { ...added, templates: new Map([['1:0', 'old-print'], ['2:3', 'new-print']]) };
   let reads = 0;
@@ -101,17 +112,21 @@ test('new employees are created as normal users and verified before capture', as
     assert.equal(command, C.CMD_USER_WRQ);
     assert.equal(payload[2], 0);
     assert.equal(payload.readUInt16LE(0), 2);
-    assert.equal(payload.subarray(48).toString().split('\0')[0], '20');
+    assert.equal(payload.subarray(48).toString().split('\0')[0], '101');
     const reply = Buffer.alloc(8); reply.writeUInt16LE(C.CMD_ACK_OK); return reply;
   } } };
   const reports = [];
   const result = await captureFingerprint(device, { ...input, createEmployee: true, name: existing.name }, {
     signal: new AbortController().signal, report: value => reports.push(value),
-  }, { read: async () => [before, added, after][reads++], sleep: async () => {},
-    open: () => ({ close() {}, async send() { const payload = Buffer.alloc(28); payload.writeUInt32LE(2, 24); return { code: C.CMD_ACK_OK, payload }; } }) });
+  }, { read: async () => [before, added, after][reads++], sleep: async () => {}, reservedEmployeeIds: () => ['100'],
+    open: () => ({ close() {}, async send(command, data) {
+      if (command === C.CMD_STARTENROLL) assert.equal(data.subarray(0, 24).toString().split('\0')[0], '101');
+      const payload = Buffer.alloc(28); payload.writeUInt32LE(2, 24); return { code: C.CMD_ACK_OK, payload };
+    } }) });
   assert.equal(result.status, 'completed');
   assert.equal(result.employeeCreated, true);
   assert.ok(reports.some(value => value.employeeCreated));
+  assert.ok(reports.some(value => value.employeeId === '101'));
 });
 
 test('the command channel reconstructs split frames and releases listeners', async () => {
@@ -161,14 +176,14 @@ test('unsupported models and UDP never enter the enrollment protocol', async () 
 
 const dbs = [];
 afterEach(() => { for (const db of dbs.splice(0)) db.close(); });
-function managerFixture(capture = async () => ({ status: 'completed', message: 'Verified', fingerprintStored: true })) {
+function managerFixture(capture = async () => ({ status: 'completed', message: 'Verified', fingerprintStored: true }), overrides = {}) {
   const db = new Database(':memory:'); dbs.push(db);
   db.exec(`CREATE TABLE enrollment_jobs(id TEXT PRIMARY KEY,device_id TEXT,employee_id TEXT,finger_index INTEGER,
     actor_id TEXT,status TEXT,message TEXT,created_at TEXT,updated_at TEXT,finished_at TEXT,deadline TEXT,
     cancel_requested INTEGER DEFAULT 0,result TEXT)`);
   const devices = [{ id: 'a', ip: '127.0.0.1', port: 4370 }, { id: 'b', ip: '127.0.0.2', port: 4370 }];
   const deps = { db, withDevice: async (_device, work) => work({}), getDeviceById: id => devices.find(device => device.id === id),
-    getRealtimeStatus: () => ({}), saveEmployees() {}, capture };
+    getRealtimeStatus: () => ({}), saveEmployees() {}, capture, ...overrides };
   return { db, devices, deps, manager: createEnrollmentManager(deps) };
 }
 const settled = () => new Promise(resolve => setImmediate(resolve));
@@ -216,4 +231,27 @@ test('recovering an unfinished audit requires review rather than claiming succes
   const manager = createEnrollmentManager(deps);
   assert.equal(manager.job('old', 'a').status, 'needs_attention');
   assert.ok(manager.job('old', 'a').finishedAt);
+});
+
+test('preview calculates IDs using only users and the selected device history', async () => {
+  const { manager, devices } = managerFixture(undefined, {
+    readUsers: async () => ({ users: [{ employeeId: '20' }] }),
+    read: async () => { throw new Error('Fingerprint data must not be requested'); },
+    reservedEmployeeIds: id => id === 'a' ? ['610'] : ['80'],
+  });
+  assert.deepEqual(await manager.nextEmployee(devices[0]), { employeeId: '611' });
+  assert.deepEqual(await manager.nextEmployee(devices[1]), { employeeId: '81' });
+});
+
+test('queued new users ignore browser-supplied IDs and audit the ID assigned during capture', async () => {
+  const { manager, devices } = managerFixture(async (_device, request, control) => {
+    assert.equal(request.employeeId, '');
+    control.report({ employeeId: '611' });
+    return { status: 'completed', message: 'Verified', fingerprintStored: true, employeeCreated: true };
+  });
+  const job = manager.start(devices[0], 'admin', { ...input, employeeId: '20', createEmployee: true, name: 'New employee' });
+  assert.equal(job.employeeId, '');
+  await settled();
+  assert.equal(manager.job(job.id, 'a').employeeId, '611');
+  assert.equal(manager.job(job.id, 'a').status, 'completed');
 });

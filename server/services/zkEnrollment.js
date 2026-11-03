@@ -10,17 +10,27 @@ function enrollmentError(message, statusCode = 409) {
 }
 
 function validateEnrollment(input) {
-  if (!/^[1-9]\d{0,8}$/.test(String(input.employeeId || ''))) throw enrollmentError('Use un ID numerico positivo sin ceros iniciales (hasta 9 digitos).', 400);
+  const createEmployee = input.createEmployee === true;
+  if (!createEmployee && !/^[1-9]\d{0,8}$/.test(String(input.employeeId || ''))) throw enrollmentError('Use un ID numerico positivo sin ceros iniciales (hasta 9 digitos).', 400);
   if (!Number.isInteger(input.fingerIndex) || input.fingerIndex < 0 || input.fingerIndex > 9) throw enrollmentError('Seleccione un dedo valido.', 400);
   if (input.confirmed !== true || input.consent !== true) throw enrollmentError('Confirme el dispositivo y el consentimiento para registrar la huella.', 400);
-  if (input.createEmployee && (typeof input.name !== 'string' || !input.name.trim() || Buffer.byteLength(input.name.trim(), 'utf8') > 24)) {
+  if (createEmployee && (typeof input.name !== 'string' || !input.name.trim() || Buffer.byteLength(input.name.trim(), 'utf8') > 24)) {
     throw enrollmentError('El nombre debe ocupar entre 1 y 24 bytes UTF-8.', 400);
   }
-  return { employeeId: String(input.employeeId), fingerIndex: input.fingerIndex,
-    createEmployee: input.createEmployee === true, name: input.createEmployee ? input.name.trim() : '' };
+  return { employeeId: createEmployee ? '' : String(input.employeeId), fingerIndex: input.fingerIndex,
+    createEmployee, name: createEmployee ? input.name.trim() : '' };
 }
 
-async function readEnrollmentSnapshot(device) {
+function nextEmployeeId(users, reservedIds = []) {
+  let highest = 0;
+  for (const value of [...users.map(user => user.employeeId), ...reservedIds]) {
+    if (/^\d{1,9}$/.test(String(value))) highest = Math.max(highest, Number(value));
+  }
+  if (highest >= 999999999) throw enrollmentError('Se alcanzo el limite de IDs numericos automaticos.');
+  return String(highest + 1);
+}
+
+async function readEnrollmentUsers(device) {
   if (device.connectionType !== 'tcp') throw enrollmentError('El registro remoto requiere conexion TCP.', 422);
   const model = String(await device.getDeviceName()).replace(/\0/g, '').trim();
   if (!/^F22(?:\/ID|ID)?$/i.test(model)) throw enrollmentError('El registro remoto solo esta habilitado para F22/F22ID.', 422);
@@ -45,6 +55,12 @@ async function readEnrollmentSnapshot(device) {
   } finally { userData.fill(0); }
   assert.equal(users.length, userCount, 'Listado de empleados incompleto.');
   await tcp.freeData();
+  return { users, usersHash, userHashes, fingerCount };
+}
+
+async function readEnrollmentSnapshot(device) {
+  const snapshot = await readEnrollmentUsers(device);
+  const tcp = device.zklibTcp;
   const request = Buffer.alloc(11);
   request[0] = 1;
   request.writeUInt16LE(7, 1);
@@ -63,10 +79,10 @@ async function readEnrollmentSnapshot(device) {
       offset += size;
     }
   } finally { data.fill(0); }
-  assert.equal(templates.size, fingerCount, 'Listado de huellas incompleto.');
+  assert.equal(templates.size, snapshot.fingerCount, 'Listado de huellas incompleto.');
   await tcp.freeData();
   // Only transient hashes stay in RAM for integrity checks; never return them to clients.
-  return { users, usersHash, userHashes, templates };
+  return { ...snapshot, templates };
 }
 
 function commandChannel(tcp) {
@@ -136,21 +152,23 @@ async function captureFingerprint(device, input, control, options = {}) {
   let createdEmployee = false;
   let initial = await read(device);
   control.signal.throwIfAborted();
-  let user = initial.users.find(item => item.employeeId === input.employeeId);
+  let employeeId = input.employeeId;
+  let user = initial.users.find(item => item.employeeId === employeeId);
   if (input.createEmployee) {
-    if (user) throw enrollmentError('El ID ya existe en este biometrico. Seleccione el empleado existente.');
+    employeeId = nextEmployeeId(initial.users, options.reservedEmployeeIds?.() || []);
+    report({ employeeId, message: `Creando empleado con ID automatico ${employeeId}.` });
     const uid = Math.max(0, ...initial.users.map(item => item.uid)) + 1;
     if (uid > 3000) throw enrollmentError('No hay un UID libre compatible para crear el empleado.');
     const payload = Buffer.alloc(72);
     payload.writeUInt16LE(uid, 0);
     payload.write(input.name, 11, 24, 'utf8');
-    payload.write(input.employeeId, 48, 24, 'ascii');
+    payload.write(employeeId, 48, 24, 'ascii');
     const reply = await device.zklibTcp.executeCmd(C.CMD_USER_WRQ, payload);
     if (reply.readUInt16LE(0) !== C.CMD_ACK_OK) throw enrollmentError('El reloj rechazo la creacion del empleado.');
     createdEmployee = true;
     report({ employeeCreated: true });
     const fresh = await read(device);
-    user = fresh.users.find(item => item.employeeId === input.employeeId);
+    user = fresh.users.find(item => item.employeeId === employeeId);
     if (!user || user.uid !== uid || user.name !== input.name || user.role !== 0) throw enrollmentError('No se pudo verificar el empleado creado.');
     if (fresh.users.length !== initial.users.length + 1 || [...initial.userHashes].some(([uid, hash]) => fresh.userHashes.get(uid) !== hash)) {
       throw enrollmentError('Se detectaron cambios inesperados en los empleados.');
@@ -174,7 +192,7 @@ async function captureFingerprint(device, input, control, options = {}) {
     if ((await channel.send(C.CMD_CANCELCAPTURE)).code !== C.CMD_ACK_OK) throw enrollmentError('No se pudo preparar la captura.');
     control.signal.throwIfAborted();
     const payload = Buffer.alloc(26);
-    payload.write(input.employeeId, 0, 24, 'ascii');
+    payload.write(employeeId, 0, 24, 'ascii');
     payload[24] = input.fingerIndex;
     payload[25] = 1;
     entered = true;
@@ -216,4 +234,4 @@ async function captureFingerprint(device, input, control, options = {}) {
   return { status: 'timeout', message: 'Tiempo agotado. No se encontro una huella nueva guardada.', employeeCreated: createdEmployee, normalModeRestored: true };
 }
 
-module.exports = { enrollmentError, validateEnrollment, readEnrollmentSnapshot, commandChannel, captureFingerprint };
+module.exports = { enrollmentError, validateEnrollment, nextEmployeeId, readEnrollmentUsers, readEnrollmentSnapshot, commandChannel, captureFingerprint };

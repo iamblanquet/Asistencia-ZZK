@@ -14,6 +14,7 @@ const {
   deleteDevice,
   updateEmployeeName,
   saveEmployees,
+  getEmployees,
 } = require('./services/db');
 const { addStoredEvents, parseAttendanceFile } = require('./services/eventStore');
 const { getSavedAttendance } = require('./services/attendanceStore');
@@ -32,7 +33,8 @@ const {
 } = require('./services/auth');
 
 const app = express();
-const enrollments = createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeStatus, saveEmployees });
+const enrollments = createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeStatus, saveEmployees,
+  reservedEmployeeIds: deviceId => getEmployees(deviceId).map(employee => employee.employeeId) });
 const port = Number(process.env.API_PORT || 5174);
 
 app.use(cors({ origin: true }));
@@ -111,6 +113,11 @@ app.get('/api/device/fingerprints', requireAdmin, async (req, res, next) => {
   const device = enrollmentDevice(req, res);
   if (!device) return;
   try { res.json(await enrollments.inspect(device, req.query.employeeId)); } catch (error) { next(error); }
+});
+app.get('/api/device/enrollment-next-id', requireAdmin, async (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try { res.json(await enrollments.nextEmployee(device)); } catch (error) { next(error); }
 });
 app.get('/api/device/enrollments', requireAdmin, (req, res, next) => {
   const device = enrollmentDevice(req, res);

@@ -1,9 +1,9 @@
 const crypto = require('node:crypto');
-const { enrollmentError, validateEnrollment, readEnrollmentSnapshot, captureFingerprint } = require('./zkEnrollment');
+const { enrollmentError, validateEnrollment, nextEmployeeId, readEnrollmentUsers, readEnrollmentSnapshot, captureFingerprint } = require('./zkEnrollment');
 const TERMINAL = new Set(['completed', 'cancelled', 'timeout', 'failed', 'needs_attention']);
 
 function createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeStatus, saveEmployees,
-  capture = captureFingerprint, read = readEnrollmentSnapshot }) {
+  capture = captureFingerprint, read = readEnrollmentSnapshot, readUsers = readEnrollmentUsers, reservedEmployeeIds = () => [] }) {
   const running = new Map();
   const clock = () => new Date().toISOString();
   db.prepare(`UPDATE enrollment_jobs SET status='needs_attention',message=?,updated_at=?,finished_at=?
@@ -21,8 +21,8 @@ function createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeSta
     const status = changes.status || current.status;
     const result = { ...(current.result || {}), ...(changes.result || {}) };
     if (changes.employeeCreated) result.employeeCreated = true;
-    db.prepare(`UPDATE enrollment_jobs SET status=?,message=?,updated_at=?,finished_at=?,deadline=?,result=? WHERE id=?`)
-      .run(status, changes.message || current.message, clock(), TERMINAL.has(status) ? clock() : null,
+    db.prepare(`UPDATE enrollment_jobs SET employee_id=?,status=?,message=?,updated_at=?,finished_at=?,deadline=?,result=? WHERE id=?`)
+      .run(changes.employeeId || current.employeeId, status, changes.message || current.message, clock(), TERMINAL.has(status) ? clock() : null,
         changes.deadline || current.deadline, Object.keys(result).length ? JSON.stringify(result) : null, id);
   }
   function assertAvailable(device) {
@@ -36,6 +36,13 @@ function createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeSta
     latest(deviceId) {
       const row = db.prepare('SELECT id FROM enrollment_jobs WHERE device_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1').get(deviceId);
       return row ? job(row.id, deviceId) : null;
+    },
+    async nextEmployee(device) {
+      assertAvailable(device);
+      return withDevice(device, async connected => {
+        const snapshot = await readUsers(connected);
+        return { employeeId: nextEmployeeId(snapshot.users, reservedEmployeeIds(device.id)) };
+      });
     },
     async inspect(device, employeeId) {
       if (!/^[1-9]\d{0,8}$/.test(String(employeeId || ''))) throw enrollmentError('ID de empleado invalido.', 400);
@@ -52,9 +59,9 @@ function createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeSta
       assertAvailable(device);
       const id = crypto.randomUUID();
       const controller = new AbortController();
-      db.prepare(`INSERT INTO enrollment_jobs(id,device_id,employee_id,finger_index,actor_id,status,message,created_at,updated_at)
-        VALUES (?,?,?,?,?,'queued',?,?,?)`).run(id, device.id, input.employeeId, input.fingerIndex, actorId,
-          'Esperando conexion con el biometrico.', clock(), clock());
+      db.prepare(`INSERT INTO enrollment_jobs(id,device_id,employee_id,finger_index,actor_id,status,message,created_at,updated_at,result)
+        VALUES (?,?,?,?,?,'queued',?,?,?,?)`).run(id, device.id, input.employeeId, input.fingerIndex, actorId,
+          'Esperando conexion con el biometrico.', clock(), clock(), JSON.stringify({ createEmployee: input.createEmployee }));
       const state = { controller, work: null };
       running.set(device.id, state);
       state.work = Promise.resolve().then(() => {
@@ -66,7 +73,7 @@ function createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeSta
         update(id, device.id, { status: 'checking', message: 'Comprobando empleado y posicion del dedo.' });
         const result = await capture(connected, input, {
           signal: controller.signal, report: changes => update(id, device.id, changes),
-        }, { saveEmployees: values => saveEmployees(device.id, values) });
+        }, { saveEmployees: values => saveEmployees(device.id, values), reservedEmployeeIds: () => reservedEmployeeIds(device.id) });
         update(id, device.id, { status: result.status, message: result.message, result });
         });
       }).catch(error => {

@@ -48,8 +48,13 @@ device_sync_status conserva el ultimo intento, ultimo exito, ultimo error y la i
 En Personal, los administradores pueden abrir Registrar huella. Primero se comprueba el ID
 y las posiciones ocupadas directamente en el reloj. Se debe confirmar el consentimiento,
 el empleado, el dedo y el biometrico antes de enviar la orden. Se admite crear un empleado
-nuevo (ID numerico positivo sin ceros iniciales, hasta nueve digitos; nombre de hasta 24 bytes UTF-8),
-siempre como usuario normal. Nunca se actualiza un ID existente ni se reemplaza una huella.
+nuevo (nombre de hasta 24 bytes UTF-8), siempre como usuario normal. Su ID es automatico:
+el siguiente al mayor ID numerico del reloj y del historial SQL de ese biometrico, hasta
+nueve digitos. No se reutilizan IDs historicos para evitar mezclar personas. La pantalla
+consulta `/api/device/enrollment-next-id` en modo de lectura; no reserva ni crea empleados.
+Antes de escribir, el backend calcula de nuevo el ID bajo la misma cola de conexiones,
+ignora cualquier ID manual de un cliente y guarda la asignacion efectiva en la auditoria.
+Nunca se actualiza un ID existente ni se reemplaza una huella.
 
 La operacion solo esta habilitada para equipos que reporten F22/F22ID por TCP. Es una
 operacion de escritura intencional y separada de la sincronizacion de lectura. Utiliza la

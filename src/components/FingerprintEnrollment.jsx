@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Fingerprint, Loader2, Search, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Fingerprint, Loader2, RefreshCw, Search, X } from 'lucide-react';
 
 const fingers = ['Meñique izquierdo', 'Anular izquierdo', 'Medio izquierdo', 'Índice izquierdo', 'Pulgar izquierdo',
   'Pulgar derecho', 'Índice derecho', 'Medio derecho', 'Anular derecho', 'Meñique derecho'];
@@ -21,6 +21,7 @@ export default function FingerprintEnrollment({ device, employees, initialEmploy
   const [error, setError] = useState('');
   const [seconds, setSeconds] = useState(null);
   const refreshed = useRef('');
+  const existingEmployeeId = useRef(initialEmployeeId);
   const dialog = useRef(null);
   const active = Boolean(job && !terminal.has(job.status));
   const query = `deviceId=${encodeURIComponent(device.id)}`;
@@ -41,6 +42,7 @@ export default function FingerprintEnrollment({ device, employees, initialEmploy
       if (payload.job && (!terminal.has(payload.job.status) || payload.job.status === 'needs_attention')) {
         setJob(payload.job);
         setEmployeeId(payload.job.employeeId);
+        setCreateEmployee(Boolean(payload.job.result?.createEmployee));
         setFinger(String(payload.job.fingerIndex));
       }
     }).catch(err => { if (!stopped) setError(err.message); })
@@ -57,6 +59,10 @@ export default function FingerprintEnrollment({ device, employees, initialEmploy
         const payload = await getJson(`/api/device/enrollments/${job.id}?${query}`);
         if (stopped) return;
         setJob(payload.job);
+        if (payload.job.employeeId) {
+          setEmployeeId(payload.job.employeeId);
+          existingEmployeeId.current = payload.job.employeeId;
+        }
         setError('');
         if (terminal.has(payload.job.status)) {
           setConsent(false);
@@ -92,6 +98,17 @@ export default function FingerprintEnrollment({ device, employees, initialEmploy
   function reset() {
     setInspection(null); setFinger(''); setConsent(false); setConfirmed(false); setJob(null); setError('');
   }
+  async function prepareNew() {
+    if (!createEmployee) existingEmployeeId.current = employeeId;
+    setCreateEmployee(true); reset(); setEmployeeId(''); setBusy(true);
+    try {
+      const payload = await getJson(`/api/device/enrollment-next-id?${query}`);
+      if (!/^[1-9]\d{0,8}$/.test(payload.employeeId)) throw new Error('No se pudo obtener un ID libre.');
+      setEmployeeId(payload.employeeId);
+      setInspection({ exists: false, occupiedSlots: [] });
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
   async function inspect() {
     setBusy(true); setError(''); setInspection(null); setFinger(''); setConsent(false); setConfirmed(false);
     try {
@@ -104,7 +121,7 @@ export default function FingerprintEnrollment({ device, employees, initialEmploy
     setBusy(true); setError('');
     try {
       const payload = await apiRequest(`/api/device/enrollments?${query}`, { method: 'POST', body: JSON.stringify({
-        employeeId, fingerIndex: Number(finger), createEmployee, name, consent, confirmed,
+        employeeId: createEmployee ? undefined : employeeId, fingerIndex: Number(finger), createEmployee, name, consent, confirmed,
       }) });
       setJob(payload.job);
     } catch (err) { setError(err.message); }
@@ -140,15 +157,17 @@ export default function FingerprintEnrollment({ device, employees, initialEmploy
       <div className="enrollment-target"><strong>{device.name}</strong><span>{device.ip}:{device.port || 4370}</span></div>
       <fieldset disabled={active || busy || recovering} className="enrollment-fields">
         <div className="enrollment-mode" role="tablist" aria-label="Tipo de empleado">
-          <button type="button" role="tab" aria-selected={!createEmployee} onClick={() => { setCreateEmployee(false); reset(); }}>Empleado existente</button>
-          <button type="button" role="tab" aria-selected={createEmployee} onClick={() => { setCreateEmployee(true); reset(); }}>Nuevo empleado</button>
+          <button type="button" role="tab" aria-selected={!createEmployee} onClick={() => { setCreateEmployee(false); setEmployeeId(existingEmployeeId.current); reset(); }}>Empleado existente</button>
+          <button type="button" role="tab" aria-selected={createEmployee} onClick={prepareNew}>Nuevo empleado</button>
         </div>
         <div className="enrollment-id-row">
-          <div className="field"><label htmlFor="enrollment-id">ID de empleado</label>
-            <input id="enrollment-id" autoFocus inputMode="numeric" maxLength={9} list="enrollment-employee-options" value={employeeId} onChange={event => { setEmployeeId(event.target.value); reset(); }} />
+          <div className="field"><label htmlFor="enrollment-id">{createEmployee ? 'ID automático' : 'ID de empleado'}</label>
+            <input id="enrollment-id" autoFocus inputMode="numeric" maxLength={9} readOnly={createEmployee} list={createEmployee ? undefined : 'enrollment-employee-options'} value={employeeId} onChange={event => { setEmployeeId(event.target.value); existingEmployeeId.current = event.target.value; reset(); }} />
             <datalist id="enrollment-employee-options">{employees.map(employee => <option key={employee.employeeId} value={employee.employeeId}>{employee.name}</option>)}</datalist>
           </div>
-          <button type="button" className="btn-action btn-action-secondary" onClick={inspect} disabled={!/^[1-9]\d{0,8}$/.test(employeeId)}><Search size={16} /> Comprobar</button>
+          {createEmployee
+            ? <button type="button" className="btn-action btn-action-secondary" onClick={prepareNew}><RefreshCw size={16} /> Actualizar ID</button>
+            : <button type="button" className="btn-action btn-action-secondary" onClick={inspect} disabled={!/^[1-9]\d{0,8}$/.test(employeeId)}><Search size={16} /> Comprobar</button>}
         </div>
         {createEmployee && <div className="field"><label htmlFor="enrollment-name">Nombre completo</label><input id="enrollment-name" value={name} maxLength={24} onChange={event => { setName(event.target.value); setConfirmed(false); }} /></div>}
         {inspection && <div className="enrollment-employee-result">{inspection.exists ? `${inspection.employee.name} · ID ${employeeId}` : `ID ${employeeId} disponible para un empleado nuevo`}</div>}
@@ -165,7 +184,7 @@ export default function FingerprintEnrollment({ device, employees, initialEmploy
       {job && <div className={`enrollment-feedback ${job.status === 'completed' ? 'is-success' : ''}`} role="status" aria-live="polite">
         {active ? <Loader2 size={21} className="spin" /> : job.status === 'completed' ? <CheckCircle2 size={21} /> : <AlertTriangle size={21} />}
         <div><strong>{labels[job.status] || job.status}</strong><p>{job.message}</p>
-          <span>ID {job.employeeId} · {fingers[job.fingerIndex]}{job.status === 'waiting' && seconds !== null ? ` · ${seconds} s` : ''}</span>
+          <span>ID {job.employeeId || 'pendiente'} · {fingers[job.fingerIndex]}{job.status === 'waiting' && seconds !== null ? ` · ${seconds} s` : ''}</span>
           {job.result?.employeeCreated && job.status !== 'completed' && <p>El empleado fue creado en el reloj; su huella aún no está confirmada.</p>}
         </div>
       </div>}
