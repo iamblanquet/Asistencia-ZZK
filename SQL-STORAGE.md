@@ -21,6 +21,8 @@ GET /api/events y GET /api/employees leen exclusivamente SQLite. El filtro de pe
 
 POST /api/device/sync?deviceId=... es la operacion explicita para descargar empleados y marcaciones. Requiere acceso al dispositivo y mantiene una sola descarga en curso por reloj. Los datos se guardan en una transaccion y luego se vuelve a consultar SQLite. Un fallo no borra el historial ni cambia la fecha de ultimo exito.
 
+La descarga TCP solicita bloques secuenciales y reconstruye tramas aunque la red las fragmente o agrupe. Valida los bytes declarados, los limites de registros y el contador de checadas antes de guardar. Una descarga parcial o un tiempo de espera no se registra como exito. No modifica la configuracion ni borra registros del biometrico.
+
 device_sync_status conserva el ultimo intento, ultimo exito, ultimo error y la informacion obtenida en la descarga. fetchedAt ahora indica la ultima sincronizacion exitosa, no el momento de cada consulta. Para datos anteriores sin fecha fiable se devuelve null hasta la siguiente sincronizacion exitosa.
 
 ## Migracion de archivos anteriores
@@ -43,6 +45,6 @@ Instalar dependencias con npm ci (o npm ci --omit=dev en el servidor). better-sq
 
 Las horas extra se calculan por empleado y jornada desde la salida programada. Cada hora se reconoce al alcanzar 50 minutos: 49 minutos generan cero, 50 generan una hora, 109 generan una y 110 generan dos. Los sobrantes no se trasladan a otros dias ni empleados: 20 minutos un dia y 40 al siguiente no generan horas extra. La tolerancia sigue aplicando solamente a la entrada. Este resultado es calculado; las marcaciones originales no se alteran.
 
-node --test server/sqlite-isolation.test.js server/source-attendance.test.js server/cached-attendance.test.js
+node --test server/sqlite-isolation.test.js server/source-attendance.test.js server/cached-attendance.test.js server/zk-tcp-download.test.js
 
 Las pruebas usan datos temporales y no conectan al reloj. Comprueban migracion, IDs repetidos, permisos, nombres, horarios, deduplicacion, reapertura y conservacion de historial.

@@ -1,17 +1,16 @@
 const fs = require('fs');
 const path = require('path');
 const ZKLib = require('zklib-js');
-const { COMMANDS, MAX_CHUNK, REQUEST_DATA } = require('zklib-js/constants');
+const { REQUEST_DATA } = require('zklib-js/constants');
 const {
-  createTCPHeader,
   decodeRecordData40,
-  decodeTCPHeader,
   decodeUserData72,
 } = require('zklib-js/utils');
 const { addStoredEvents } = require('./eventStore');
 const { getEmployeeOverrides, saveEmployees, getEmployees } = require('./db');
 const { db } = require('./sqlite');
 const { getSavedAttendance, recordSyncSuccess } = require('./attendanceStore');
+const { readTcpPreparedData, validateRecordBuffer } = require('./zkTcpDownload');
 
 loadEnvFile();
 
@@ -69,12 +68,16 @@ async function withReadOnlyDevice(deviceConfig, work) {
   };
   return enqueueDeviceWork(async () => {
     const device = new ZKLib(config.ip, config.port, config.timeout, config.inport);
+    let connected = false;
 
     try {
       await createSocketQuietly(device);
+      connected = true;
       return await work(device, config);
     } catch (error) {
-      error.publicMessage = `No se pudo conectar al ZKTeco ${config.model || ''} en ${config.ip}:${config.port}.`;
+      error.publicMessage = connected
+        ? `No se pudo completar la lectura del ZKTeco en ${config.ip}:${config.port}: ${error.message}`
+        : `No se pudo conectar al ZKTeco ${config.model || ''} en ${config.ip}:${config.port}.`;
       throw error;
     } finally {
       try {
@@ -179,12 +182,13 @@ async function readAttendanceSnapshot(deviceConfig) {
     const attendanceResult = await readAttendancesCompatible(device);
 
     if (usersResult?.err || attendanceResult?.err) throw (usersResult?.err || attendanceResult?.err);
-    if (!attendanceResult?.data?.length && Number(deviceInfo?.logCounts) > 0) throw new Error('El equipo reporta registros pero no entrego el historial.');
+    if ((attendanceResult?.data?.length || 0) < Number(deviceInfo?.logCounts || 0)) throw new Error('El equipo no entrego el historial completo.');
     return db.transaction(() => {
       saveEmployees(config.id, normalizeEmployees(usersResult?.data || [], config.id));
       const employees = getEmployees(config.id);
       const employeeIndex = buildEmployeeIndex(employees);
       const pulledEvents = normalizeEvents(attendanceResult?.data || [], employeeIndex);
+      if (pulledEvents.length !== attendanceResult.data.length) throw new Error('El historial contiene checadas con fechas invalidas.');
       addStoredEvents(config.id, pulledEvents, 'device');
       recordSyncSuccess(config.id, deviceInfo);
       return getSavedAttendance(config);
@@ -221,27 +225,17 @@ function normalizeStoredEvents(records, employeeIndex) {
 }
 
 async function readUsersCompatible(device) {
-  const standardResult = await safeRead(() => device.getUsers());
-  if (standardResult?.data?.length || device.connectionType !== 'tcp') {
-    if (!standardResult) throw new Error('No se pudo descargar el listado de empleados.');
-    return standardResult || { data: [] };
-  }
-
-  const fallbackResult = await safeRead(() => readTcpUsers(device.zklibTcp));
-  if (!standardResult && !fallbackResult) throw new Error('No se pudo descargar el listado de empleados.');
-  return fallbackResult?.data?.length ? fallbackResult : (standardResult || { data: [] });
+  if (device.connectionType === 'tcp') return readTcpUsers(device.zklibTcp);
+  const result = await device.getUsers();
+  if (!result) throw new Error('No se pudo descargar el listado de empleados.');
+  return result;
 }
 
 async function readAttendancesCompatible(device) {
-  const standardResult = await safeRead(() => device.getAttendances());
-  if (standardResult?.data?.length || device.connectionType !== 'tcp') {
-    if (!standardResult) throw new Error('No se pudo descargar el historial de asistencias.');
-    return standardResult || { data: [] };
-  }
-
-  const fallbackResult = await safeRead(() => readTcpAttendances(device.zklibTcp));
-  if (!standardResult && !fallbackResult) throw new Error('No se pudo descargar el historial de asistencias.');
-  return fallbackResult?.data?.length ? fallbackResult : (standardResult || { data: [] });
+  if (device.connectionType === 'tcp') return readTcpAttendances(device.zklibTcp);
+  const result = await device.getAttendances();
+  if (!result) throw new Error('No se pudo descargar el historial de asistencias.');
+  return result;
 }
 
 async function readTcpUsers(tcp) {
@@ -250,7 +244,7 @@ async function readTcpUsers(tcp) {
   await safeRead(() => tcp.freeData());
 
   const USER_PACKET_SIZE = 72;
-  let userData = data.subarray(4);
+  let userData = validateRecordBuffer(data, USER_PACKET_SIZE);
   const users = [];
 
   while (userData.length >= USER_PACKET_SIZE) {
@@ -258,7 +252,7 @@ async function readTcpUsers(tcp) {
     userData = userData.subarray(USER_PACKET_SIZE);
   }
 
-  return { data: users, fallback: 'tcp-prepared-data' };
+  return { data: users, download: 'tcp-sequential' };
 }
 
 async function readTcpAttendances(tcp) {
@@ -267,7 +261,7 @@ async function readTcpAttendances(tcp) {
   await safeRead(() => tcp.freeData());
 
   const RECORD_PACKET_SIZE = 40;
-  let recordData = data.subarray(4);
+  let recordData = validateRecordBuffer(data, RECORD_PACKET_SIZE);
   const records = [];
 
   while (recordData.length >= RECORD_PACKET_SIZE) {
@@ -275,103 +269,7 @@ async function readTcpAttendances(tcp) {
     recordData = recordData.subarray(RECORD_PACKET_SIZE);
   }
 
-  return { data: records, fallback: 'tcp-prepared-data' };
-}
-
-function readTcpPreparedData(tcp, reqData) {
-  return new Promise(async (resolve, reject) => {
-    let timer = null;
-    let buffer = Buffer.from([]);
-
-    const cleanup = () => {
-      if (timer) {
-        clearTimeout(timer);
-      }
-      tcp.socket.removeListener('data', handleData);
-      tcp.socket.removeListener('close', handleClose);
-    };
-
-    const fail = (error) => {
-      cleanup();
-      reject(error);
-    };
-
-    const finish = (size) => {
-      cleanup();
-      resolve(buffer.subarray(0, size));
-    };
-
-    const resetTimer = (size) => {
-      if (timer) {
-        clearTimeout(timer);
-      }
-      timer = setTimeout(() => {
-        fail(new Error(`TIMEOUT_READING_TCP_PREPARED_DATA ${buffer.length}/${size}`));
-      }, tcp.timeout || 15000);
-    };
-
-    function handleClose() {
-      fail(new Error('SOCKET_CLOSED_READING_TCP_PREPARED_DATA'));
-    }
-
-    function handleData(chunk) {
-      const payload = stripTcpChunkHeader(chunk);
-      buffer = Buffer.concat([buffer, payload]);
-    }
-
-    try {
-      tcp.replyId++;
-      const request = createTCPHeader(COMMANDS.CMD_DATA_WRRQ, tcp.sessionId, tcp.replyId, reqData);
-      const reply = await tcp.requestData(request);
-      if (!reply) {
-        throw new Error('NO_PREPARE_DATA_REPLY');
-      }
-
-      const header = decodeTCPHeader(reply.subarray(0, 16));
-      if (header.commandId === COMMANDS.CMD_DATA) {
-        resolve(reply.subarray(16));
-        return;
-      }
-      if (header.commandId !== COMMANDS.CMD_ACK_OK && header.commandId !== COMMANDS.CMD_PREPARE_DATA) {
-        throw new Error(`UNEXPECTED_PREPARE_DATA_COMMAND ${header.commandId}`);
-      }
-
-      const recvData = reply.subarray(16);
-      const size = recvData.length >= 5 ? recvData.readUIntLE(1, 4) : 0;
-      if (size <= 0) {
-        resolve(Buffer.from([]));
-        return;
-      }
-
-      tcp.socket.on('data', handleData);
-      tcp.socket.once('close', handleClose);
-      resetTimer(size);
-
-      const poll = () => {
-        if (buffer.length >= size) {
-          finish(size);
-          return;
-        }
-        resetTimer(size);
-        setTimeout(poll, 25);
-      };
-
-      for (let start = 0; start < size; start += MAX_CHUNK) {
-        tcp.sendChunkRequest(start, Math.min(MAX_CHUNK, size - start));
-      }
-
-      poll();
-    } catch (error) {
-      fail(error);
-    }
-  });
-}
-
-function stripTcpChunkHeader(chunk) {
-  if (chunk.length >= 16 && chunk.compare(Buffer.from([0x50, 0x50, 0x82, 0x7d]), 0, 4, 0, 4) === 0) {
-    return chunk.subarray(16);
-  }
-  return chunk;
+  return { data: records, download: 'tcp-sequential' };
 }
 
 async function safeRead(read) {

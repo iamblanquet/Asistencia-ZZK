@@ -26,6 +26,7 @@ const ZKLib = require('zklib-js');
 let connectCalls = 0;
 let online = false;
 let failure = null;
+let reportedLogCount = 1;
 let waitForRead = null;
 let readStarted = null;
 mock.method(ZKLib.prototype, 'createSocket', async function () {
@@ -34,7 +35,7 @@ mock.method(ZKLib.prototype, 'createSocket', async function () {
   this.connectionType = 'udp';
 });
 mock.method(ZKLib.prototype, 'disconnect', async () => {});
-mock.method(ZKLib.prototype, 'getInfo', async () => ({ logCounts: 1 }));
+mock.method(ZKLib.prototype, 'getInfo', async () => ({ logCounts: reportedLogCount }));
 mock.method(ZKLib.prototype, 'getUsers', async function () {
   if (readStarted) readStarted();
   if (waitForRead) await waitForRead;
@@ -115,6 +116,21 @@ test('partial download failures are not recorded as a successful sync', async ()
   assert.equal((await request('/api/device/sync?deviceId=a', 'POST')).status, 503);
   assert.equal(getSavedAttendance(getDeviceById('a')).fetchedAt, old.fetchedAt);
   failure = null;
+});
+
+test('a silently truncated history cannot overwrite a successful synchronization', async () => {
+  const old = getSavedAttendance(getDeviceById('a'));
+  reportedLogCount = 2;
+  try {
+    const response = await request('/api/device/sync?deviceId=a', 'POST');
+    assert.equal(response.status, 503);
+    const saved = getSavedAttendance(getDeviceById('a'));
+    assert.equal(saved.fetchedAt, old.fetchedAt);
+    assert.equal(saved.events.length, old.events.length);
+    assert.match(saved.sync.lastError, /historial completo/);
+  } finally {
+    reportedLogCount = 1;
+  }
 });
 test('history remains available while one shared synchronization is running', async () => {
   const before = connectCalls;
