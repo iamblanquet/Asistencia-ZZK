@@ -1078,6 +1078,32 @@ button:disabled {
   gap: 12px;
 }
 
+.active-device-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 220px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.active-device-label svg {
+  flex-shrink: 0;
+}
+
+.active-device-label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .active-device-label {
+    display: none;
+  }
+}
+
 .attendance-table-toolbar {
   justify-content: space-between;
   flex-wrap: wrap;

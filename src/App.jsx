@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { preferredDevice, rememberDevice } from './utils/deviceSelection';
 import {
   AlertTriangle,
   ArrowDownWideNarrow,
@@ -218,6 +219,7 @@ function App() {
       latestLoad.current += 1;
       loadedDeviceId.current = '';
       setDevices([]);
+      setActiveDeviceId('');
       setEvents([]);
       setEmployees([]);
       setFetchedAt(null);
@@ -315,7 +317,7 @@ function App() {
   useEffect(() => {
     if (!currentUser) return;
     loadDevices().then((list) => {
-      const firstDev = list?.[0];
+      const firstDev = preferredDevice(list || [], currentUser.id, window.localStorage);
       if (firstDev) {
         setActiveDeviceId(firstDev.id);
         loadEvents(range, firstDev.id);
@@ -329,6 +331,12 @@ function App() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
+
+  useEffect(() => {
+    if (devices.some(item => item.id === activeDeviceId)) {
+      rememberDevice(activeDeviceId, currentUser?.id, window.localStorage);
+    }
+  }, [activeDeviceId, currentUser?.id, devices]);
 
   const visibleEvents = useMemo(() => {
     const query = employeeQuery.trim().toLowerCase();
@@ -1163,6 +1171,12 @@ function App() {
             }</h2>
           </div>
           <div className="header-actions">
+            {devices.find(item => item.id === activeDeviceId) && (
+              <div className="active-device-label" title={devices.find(item => item.id === activeDeviceId)?.ip}>
+                <Wifi size={15} aria-hidden="true" />
+                <span>{devices.find(item => item.id === activeDeviceId)?.name}</span>
+              </div>
+            )}
             <div className="mobile-header-controls">
               <select
                 className="mobile-sede-select"
