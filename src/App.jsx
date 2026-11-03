@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
   CalendarDays,
   Clock,
   Edit,
@@ -54,6 +56,7 @@ import {
   addDays,
   buildDailySummary,
   buildEmployeeTotals,
+  filterAndSortDailyRows,
   dateLabel,
   dateTimeLabel,
   decimalHours,
@@ -135,6 +138,8 @@ function App() {
   const [events, setEvents] = useState([]);
   const [selectedEmployee, setSelectedEmployee] = useState('all');
   const [employeeQuery, setEmployeeQuery] = useState('');
+  const [attendanceStatus, setAttendanceStatus] = useState('all');
+  const [attendanceDescending, setAttendanceDescending] = useState(false);
   const [device, setDevice] = useState({ ip: '172.28.10.105', port: 4370 });
   const [deviceInfo, setDeviceInfo] = useState(null);
   const [fetchedAt, setFetchedAt] = useState(null);
@@ -393,6 +398,10 @@ function App() {
   );
 
   const totals = useMemo(() => buildEmployeeTotals(summaryRows), [summaryRows]);
+  const attendanceTableRows = useMemo(
+    () => filterAndSortDailyRows(summaryRows, attendanceStatus, attendanceDescending),
+    [summaryRows, attendanceStatus, attendanceDescending],
+  );
 
   const filteredEmployees = useMemo(() => {
     return employees.filter(emp => {
@@ -1606,12 +1615,42 @@ function App() {
               </div>
 
               <div className="table-card">
-                <h3>Resumen del Periodo</h3>
+                <div className="attendance-table-toolbar">
+                  <h3>Resumen del Periodo</h3>
+                  <div className="attendance-table-controls">
+                    <div className="attendance-status-filter">
+                      <label htmlFor="attendance-status">Estado</label>
+                      <select id="attendance-status" value={attendanceStatus} onChange={event => setAttendanceStatus(event.target.value)}>
+                        <option value="all">Todos</option>
+                        <option value="A tiempo">A tiempo</option>
+                        <option value="Retardo">Retardo</option>
+                        <option value="S. Temprana">Salida temprana</option>
+                        <option value="Retardo + S.Temp.">Retardo + salida temprana</option>
+                        <option value="Incompleto">Incompleto</option>
+                      </select>
+                    </div>
+                    <div className="attendance-order-control">
+                      {attendanceDescending ? <ArrowDownWideNarrow size={16} aria-hidden="true" /> : <ArrowUpNarrowWide size={16} aria-hidden="true" />}
+                      <span>{attendanceDescending ? 'Descendente' : 'Ascendente'}</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-label="Orden descendente por fecha"
+                        aria-checked={attendanceDescending}
+                        className={`attendance-order-switch${attendanceDescending ? ' is-checked' : ''}`}
+                        onClick={() => setAttendanceDescending(value => !value)}
+                        title={attendanceDescending ? 'Cambiar a orden ascendente' : 'Cambiar a orden descendente'}
+                      >
+                        <span />
+                      </button>
+                    </div>
+                  </div>
+                </div>
                 <div className="table-responsive">
                   <table>
                     <thead>
                       <tr>
-                        <th>Fecha</th>
+                        <th aria-sort={attendanceDescending ? 'descending' : 'ascending'}>Fecha</th>
                         <th>No.</th>
                         <th>Empleado</th>
                         <th>Entrada</th>
@@ -1624,7 +1663,7 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {summaryRows.map((row) => (
+                      {attendanceTableRows.map((row) => (
                         <tr key={`${row.employeeId}-${row.dateKey}`}>
                           <td>{dateLabel(row.dateKey)}</td>
                           <td>{row.employeeId}</td>
@@ -1642,7 +1681,7 @@ function App() {
                           </td>
                         </tr>
                       ))}
-                      {!summaryRows.length && (
+                      {!attendanceTableRows.length && (
                         <tr>
                           <td colSpan="10" className="empty-cell">Sin registros para los filtros actuales</td>
                         </tr>

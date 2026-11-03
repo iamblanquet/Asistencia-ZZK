@@ -140,3 +140,30 @@ test('duplicate attempts in a night shift share the same workday', async () => {
   assert.equal(row.workedMinutes, 480);
   assert.equal(row.status, 'A tiempo');
 });
+
+test('table filters every state including combined incidents without changing dashboard rows', async () => {
+  const { filterAndSortDailyRows } = await modulePromise;
+  const statuses = ['A tiempo', 'Retardo', 'S. Temprana', 'Retardo + S.Temp.', 'Incompleto'];
+  const rows = statuses.map((status, index) => ({ status, dateKey: '2026-11-03', employeeId: String(index + 1) }));
+  const before = JSON.stringify(rows);
+  for (const status of statuses) {
+    assert.deepEqual(filterAndSortDailyRows(rows, status).map(row => row.status), [status]);
+  }
+  assert.equal(filterAndSortDailyRows(rows).length, rows.length);
+  assert.deepEqual(filterAndSortDailyRows(rows, 'Otro estado'), []);
+  assert.equal(JSON.stringify(rows), before);
+});
+
+test('table order is chronological in both directions with numeric employee IDs', async () => {
+  const { filterAndSortDailyRows } = await modulePromise;
+  const rows = [
+    { dateKey: '2026-11-03', employeeId: '10', status: 'Retardo' },
+    { dateKey: '2026-10-31', employeeId: '1', status: 'A tiempo' },
+    { dateKey: '2026-11-03', employeeId: '2', status: 'Retardo' },
+  ];
+  assert.deepEqual(filterAndSortDailyRows(rows).map(row => row.employeeId), ['1', '2', '10']);
+  assert.deepEqual(filterAndSortDailyRows(rows, 'all', true).map(row => row.employeeId), ['10', '2', '1']);
+  assert.deepEqual(filterAndSortDailyRows(rows, 'Retardo', true).map(row => row.employeeId), ['10', '2']);
+  assert.deepEqual(rows.map(row => row.employeeId), ['10', '1', '2']);
+  assert.deepEqual(filterAndSortDailyRows([]), []);
+});

@@ -135,6 +135,14 @@ export function buildEmployeeTotals(rows) {
   );
 }
 
+export function filterAndSortDailyRows(rows, status = 'all', descending = false) {
+  const direction = descending ? -1 : 1;
+  return rows.filter(row => status === 'all' || row.status === status).sort((a, b) => {
+    const byDate = a.dateKey.localeCompare(b.dateKey);
+    return direction * (byDate || a.employeeId.localeCompare(b.employeeId, 'es', { numeric: true }));
+  });
+}
+
 function calculateDay(day, settings) {
   const punches = [...day.punches].sort((a, b) => a - b);
   const attempts = [];
