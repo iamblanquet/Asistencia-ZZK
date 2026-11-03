@@ -167,3 +167,19 @@ test('table order is chronological in both directions with numeric employee IDs'
   assert.deepEqual(rows.map(row => row.employeeId), ['10', '1', '2']);
   assert.deepEqual(filterAndSortDailyRows([]), []);
 });
+
+test('event log shows newest dates and times first without changing events or their types', async () => {
+  const { sortEventsNewestFirst } = await modulePromise;
+  const events = [
+    { id: 'old', timestamp: '2026-10-31T18:00:00-06:00', eventType: 'Salida' },
+    { id: 'entry', timestamp: '2026-11-03T08:00:00-06:00', eventType: 'Entrada' },
+    { id: 'exit', timestamp: '2026-11-03T17:00:00-06:00', eventType: 'Salida' },
+    { id: 'yesterday', timestamp: '2026-11-02T18:00:00-06:00', eventType: 'Salida' },
+  ];
+  const before = JSON.stringify(events);
+  const sorted = sortEventsNewestFirst(events);
+  assert.deepEqual(sorted.map(event => event.id), ['exit', 'entry', 'yesterday', 'old']);
+  assert.equal(sorted[1].eventType, 'Entrada');
+  assert.equal(JSON.stringify(events), before);
+  assert.deepEqual(sortEventsNewestFirst([]), []);
+});

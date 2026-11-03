@@ -57,6 +57,7 @@ import {
   buildDailySummary,
   buildEmployeeTotals,
   filterAndSortDailyRows,
+  sortEventsNewestFirst,
   dateLabel,
   dateTimeLabel,
   decimalHours,
@@ -356,7 +357,7 @@ function App() {
       groups[key].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
     }
 
-    return visibleEvents.map((event) => {
+    return sortEventsNewestFirst(visibleEvents.map((event) => {
       const dateKey = event.localDate || event.timestamp.split('T')[0];
       const key = `${event.employeeId}::${dateKey}`;
       const dayEvents = groups[key] || [];
@@ -389,7 +390,7 @@ function App() {
         ...event,
         eventType: type,
       };
-    });
+    }));
   }, [events, visibleEvents, schedule]);
 
   const summaryRows = useMemo(
@@ -1879,7 +1880,7 @@ function App() {
                     <table>
                       <thead>
                         <tr>
-                          <th>Fecha y hora</th>
+                          <th aria-sort="descending">Fecha y hora</th>
                           <th>No.</th>
                           <th>Empleado</th>
                           <th>Evento</th>

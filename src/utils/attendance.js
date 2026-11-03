@@ -143,6 +143,10 @@ export function filterAndSortDailyRows(rows, status = 'all', descending = false)
   });
 }
 
+export function sortEventsNewestFirst(events) {
+  return [...events].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+}
+
 function calculateDay(day, settings) {
   const punches = [...day.punches].sort((a, b) => a - b);
   const attempts = [];
