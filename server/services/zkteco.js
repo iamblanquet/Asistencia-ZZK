@@ -58,7 +58,7 @@ function enqueueDeviceWork(work) {
   return run;
 }
 
-async function withReadOnlyDevice(deviceConfig, work) {
+async function withDevice(deviceConfig, work) {
   const config = {
     ...getDeviceConfig(),
     ...deviceConfig,
@@ -107,7 +107,7 @@ async function createSocketQuietly(device) {
 }
 
 async function readDeviceStatus(deviceConfig) {
-  return withReadOnlyDevice(deviceConfig, async (device, config) => {
+  return withDevice(deviceConfig, async (device, config) => {
     const info = await safeRead(() => device.getInfo());
     const deviceTime = await safeRead(() => device.getTime());
     const deviceName = await safeRead(() => device.getDeviceName());
@@ -176,7 +176,7 @@ function filterDuplicatePunches(events) {
 }
 
 async function readAttendanceSnapshot(deviceConfig) {
-  return withReadOnlyDevice(deviceConfig, async (device, config) => {
+  return withDevice(deviceConfig, async (device, config) => {
     const deviceInfo = await safeRead(() => device.getInfo());
     const usersResult = await readUsersCompatible(device);
     const attendanceResult = await readAttendancesCompatible(device);
@@ -419,6 +419,7 @@ function naturalCompare(left, right) {
 }
 
 module.exports = {
+  withDevice,
   getDeviceConfig,
   readDeviceStatus,
   readDeviceDiagnostics,

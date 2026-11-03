@@ -12,6 +12,7 @@ async function startRealtime(deviceConfig) {
 
   const state = {
     active: false,
+    connecting: true,
     deviceId,
     device: publicDevice(deviceConfig),
     startedAt: null,
@@ -45,11 +46,13 @@ async function startRealtime(deviceConfig) {
     });
 
     state.active = true;
+    state.connecting = false;
     state.startedAt = new Date().toISOString();
     state.stoppedAt = null;
     state.error = null;
     return getRealtimeStatus(deviceId);
   } catch (error) {
+    state.connecting = false;
     state.active = false;
     state.error = error.message;
     try {
@@ -74,6 +77,7 @@ async function stopRealtime(deviceId) {
   }
 
   state.active = false;
+  state.connecting = false;
   state.stoppedAt = new Date().toISOString();
   return getRealtimeStatus(deviceId);
 }
@@ -90,6 +94,7 @@ function getRealtimeStatus(deviceId) {
 
   return {
     active: state.active,
+    connecting: state.connecting,
     deviceId: state.deviceId,
     device: state.device,
     startedAt: state.startedAt,

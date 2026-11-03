@@ -43,6 +43,35 @@ La descarga TCP solicita bloques secuenciales y reconstruye tramas aunque la red
 
 device_sync_status conserva el ultimo intento, ultimo exito, ultimo error y la informacion obtenida en la descarga. fetchedAt ahora indica la ultima sincronizacion exitosa, no el momento de cada consulta. Para datos anteriores sin fecha fiable se devuelve null hasta la siguiente sincronizacion exitosa.
 
+## Registro remoto de huellas
+
+En Personal, los administradores pueden abrir Registrar huella. Primero se comprueba el ID
+y las posiciones ocupadas directamente en el reloj. Se debe confirmar el consentimiento,
+el empleado, el dedo y el biometrico antes de enviar la orden. Se admite crear un empleado
+nuevo (ID numerico positivo sin ceros iniciales, hasta nueve digitos; nombre de hasta 24 bytes UTF-8),
+siempre como usuario normal. Nunca se actualiza un ID existente ni se reemplaza una huella.
+
+La operacion solo esta habilitada para equipos que reporten F22/F22ID por TCP. Es una
+operacion de escritura intencional y separada de la sincronizacion de lectura. Utiliza la
+misma cola de conexiones que las consultas al reloj y rechaza conexiones en tiempo real
+simultaneas. No cambia horarios, red, contrasenas, privilegios, ni configuracion del biometrico.
+
+El estado se consulta en SQL cada segundo. El backend espera hasta 90 segundos por la captura
+y comprueba el contador de huellas cada dos segundos. No anuncia lecturas 1/3, 2/3, etc.
+Solo confirma exito si encuentra la nueva posicion, comprueba que los usuarios y huellas
+anteriores no cambiaron y el reloj acepto cancelar la captura y volver al modo normal.
+Una cancelacion concurrente con una captura ya guardada informa el registro efectivo.
+Si el equipo queda inaccesible o no se puede confirmar el resultado, se solicita revision,
+sin afirmar que la huella se perdio. Crear un empleado no se revierte si la captura falla.
+
+`enrollment_jobs` guarda auditoria por administrador, dispositivo, empleado y dedo, con
+estado, fechas, cancelacion y resultado. No guarda imagenes, plantillas ni hashes biometricos.
+Las plantillas se leen solo a memoria del servidor para verificar posiciones e integridad;
+los buffers se limpian y nunca se envian al navegador. Las rutas `/api/device/fingerprints`
+y `/api/device/enrollments` requieren administrador y `deviceId` explicito.
+Los estados activos se recuperan al reabrir el dialogo. Un reinicio abrupto los marca para
+revision; el apagado normal intenta cancelar la captura y restaurar el reloj antes de salir.
+
 ## Migracion de archivos anteriores
 
 En el primer arranque se respaldan los archivos JSON/DB antiguos en server/data/pre-sqlite-* y se importan dentro de una unica transaccion. Un error aborta la migracion. Las claves existentes se conservan; los nuevos usuarios usan scrypt. No se modifica el reloj.
@@ -65,6 +94,6 @@ Las checadas de un empleado en la misma jornada se agrupan en intentos de hasta 
 
 Las horas extra se calculan por empleado y jornada desde la salida programada. Cada hora se reconoce al alcanzar 50 minutos: 49 minutos generan cero, 50 generan una hora, 109 generan una y 110 generan dos. Los sobrantes no se trasladan a otros dias ni empleados: 20 minutos un dia y 40 al siguiente no generan horas extra. La tolerancia sigue aplicando solamente a la entrada. Este resultado es calculado; las marcaciones originales no se alteran.
 
-node --test server/sqlite-isolation.test.js server/source-attendance.test.js server/cached-attendance.test.js server/zk-tcp-download.test.js
+node --test server/sqlite-isolation.test.js server/source-attendance.test.js server/cached-attendance.test.js server/zk-tcp-download.test.js server/device-selection.test.js server/nightly-sync.test.js server/enrollment.test.js
 
 Las pruebas usan datos temporales y no conectan al reloj. Comprueban migracion, IDs repetidos, permisos, nombres, horarios, deduplicacion, reapertura y conservacion de historial.

@@ -4,6 +4,7 @@ const {
   getDeviceConfig,
   readDeviceDiagnostics,
   readDeviceStatus,
+  withDevice,
 } = require('./services/zkteco');
 const {
   getDevices,
@@ -12,10 +13,13 @@ const {
   updateDevice,
   deleteDevice,
   updateEmployeeName,
+  saveEmployees,
 } = require('./services/db');
 const { addStoredEvents, parseAttendanceFile } = require('./services/eventStore');
 const { getSavedAttendance } = require('./services/attendanceStore');
 const { syncAttendance } = require('./services/syncAttendance');
+const { db } = require('./services/sqlite');
+const { createEnrollmentManager } = require('./services/enrollment');
 const { getRealtimeStatus, startRealtime, stopRealtime } = require('./services/realtime');
 const {
   authenticate,
@@ -28,6 +32,7 @@ const {
 } = require('./services/auth');
 
 const app = express();
+const enrollments = createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeStatus, saveEmployees });
 const port = Number(process.env.API_PORT || 5174);
 
 app.use(cors({ origin: true }));
@@ -95,6 +100,38 @@ function getRequestDevice(req) {
   const found = allowedDevices.find(d => String(d.id) === String(deviceId));
   return found || null;
 }
+
+function enrollmentDevice(req, res) {
+  const device = getRequestDevice(req);
+  if (!device) res.status(404).json({ message: 'Biometrico no encontrado o acceso denegado.' });
+  return device;
+}
+
+app.get('/api/device/fingerprints', requireAdmin, async (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try { res.json(await enrollments.inspect(device, req.query.employeeId)); } catch (error) { next(error); }
+});
+app.get('/api/device/enrollments', requireAdmin, (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try { res.json({ job: enrollments.latest(device.id) }); } catch (error) { next(error); }
+});
+app.post('/api/device/enrollments', requireAdmin, (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try { res.status(202).json({ job: enrollments.start(device, req.user.id, req.body) }); } catch (error) { next(error); }
+});
+app.get('/api/device/enrollments/:id', requireAdmin, (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try { res.json({ job: enrollments.job(req.params.id, device.id) }); } catch (error) { next(error); }
+});
+app.post('/api/device/enrollments/:id/cancel', requireAdmin, (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try { res.json({ job: enrollments.cancel(req.params.id, device.id, req.user.id) }); } catch (error) { next(error); }
+});
 
 app.get('/api/health', (_req, res) => {
   res.json({
@@ -278,6 +315,7 @@ app.get('/api/device/realtime/status', (req, res) => {
 });
 
 app.post('/api/device/realtime/start', async (req, res) => {
+  if (enrollments.isBusy(req.query.deviceId)) return res.status(409).json({ message: 'Espere a que termine el registro de huella.' });
   const device = getRequestDevice(req);
   if (!device) {
     return res.status(404).json({ ok: false, message: 'Dispositivo no encontrado o acceso denegado.' });
@@ -401,12 +439,21 @@ app.use((error, req, res, _next) => {
   });
 });
 
-if (require.main === module) app.listen(port, process.env.HOST || '127.0.0.1', () => {
+if (require.main === module) {
+let nightlyTask;
+const server = app.listen(port, process.env.HOST || '127.0.0.1', () => {
   console.log(`API ZKTeco lista en http://127.0.0.1:${port}`);
   if (process.env.ASISTENCIA_DAILY_SYNC === '1' ||
       (process.env.NODE_ENV === 'production' && process.env.ASISTENCIA_DAILY_SYNC !== '0')) {
-    require('./services/nightlySync').startNightlySync();
+    nightlyTask = require('./services/nightlySync').startNightlySync();
   }
 });
+process.once('SIGTERM', async () => {
+  nightlyTask?.stop();
+  const timeout = setTimeout(() => process.exit(1), 25000);
+  await enrollments.shutdown();
+  server.close(() => { clearTimeout(timeout); process.exit(0); });
+});
+}
 
 module.exports = app;

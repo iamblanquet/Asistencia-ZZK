@@ -51,6 +51,15 @@ db.exec(`
     status TEXT NOT NULL CHECK(status IN ('running','success','partial','failed')),
     results TEXT NOT NULL CHECK(json_valid(results))
   );
+  CREATE TABLE IF NOT EXISTS enrollment_jobs (
+    id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
+    employee_id TEXT NOT NULL, finger_index INTEGER NOT NULL CHECK(finger_index BETWEEN 0 AND 9),
+    actor_id TEXT NOT NULL, status TEXT NOT NULL, message TEXT NOT NULL,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT,
+    deadline TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0,
+    result TEXT CHECK(result IS NULL OR json_valid(result))
+  );
+  CREATE INDEX IF NOT EXISTS enrollment_device_created ON enrollment_jobs(device_id,created_at);
 `);
 
 function legacy(name, fallback) {

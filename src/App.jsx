@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { preferredDevice, rememberDevice } from './utils/deviceSelection';
+import FingerprintEnrollment from './components/FingerprintEnrollment';
 import {
   AlertTriangle,
   ArrowDownWideNarrow,
@@ -8,6 +9,7 @@ import {
   Clock,
   Edit,
   FileDown,
+  Fingerprint,
   Lock,
   RefreshCw,
   Search,
@@ -134,6 +136,7 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [activeTab, setActiveTab] = useState('general');
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [enrollmentEmployee, setEnrollmentEmployee] = useState(null);
   const [range, setRange] = useState({ from: defaultFrom, to: defaultTo });
   const [schedule, setSchedule] = useState(initialSchedule);
   const [employees, setEmployees] = useState([]);
@@ -1947,6 +1950,7 @@ function App() {
               <div className="table-card">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
                   <h3 style={{ margin: 0 }}>Personal Registrado ({filteredEmployees.length})</h3>
+                  {currentUser?.role === 'admin' && <button type="button" className="btn-action btn-action-secondary" onClick={() => setEnrollmentEmployee('')} disabled={!activeDeviceId}><Fingerprint size={16} /> Registrar huella</button>}
                   <div className="colaboradores-search-wrap" style={{ position: 'relative', width: '250px', maxWidth: '100%' }}>
                     <input 
                       type="search" 
@@ -2309,6 +2313,18 @@ function App() {
         </div>
 
         {/* Centered Settings Modal (Two-Column Layout) */}
+        {enrollmentEmployee !== null && currentUser?.role === 'admin' && devices.some(item => item.id === activeDeviceId) && (
+          <FingerprintEnrollment
+            key={activeDeviceId}
+            device={devices.find(item => item.id === activeDeviceId)}
+            employees={employees}
+            initialEmployeeId={enrollmentEmployee}
+            getJson={getJson}
+            apiRequest={apiRequest}
+            onClose={() => setEnrollmentEmployee(null)}
+            onSaved={() => loadEvents(currentView.current.range, activeDeviceId)}
+          />
+        )}
         {isConfigOpen && (
           <div className="modal-overlay" onClick={() => setIsConfigOpen(false)}>
             <div
