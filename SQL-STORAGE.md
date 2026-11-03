@@ -17,6 +17,24 @@ Las consultas de asistencia, importaciones, edicion de nombres y PDF deben indic
 
 ## Consulta y sincronizacion
 
+### Sincronizacion nocturna
+
+En produccion el servicio programa `59 23 * * *` en `America/Mexico_City` (23:59).
+Descarga todos los biometricos activos secuencialmente, incluidos los que se agreguen despues.
+Comparte la cola con las sincronizaciones manuales. Cada equipo tiene hasta tres intentos,
+con 30 segundos de espera entre intentos; un fallo no borra historial ni detiene los demas.
+La ejecucion puede terminar despues de medianoche si la descarga tarda.
+
+`nightly_sync_runs` conserva fecha de corte, inicio, fin, estado y resultados por dispositivo.
+Los detalles tambien aparecen en `journalctl --user -u asistencia-zzk` con prefijo `[nightly-sync]`.
+Al arrancar comprueba el ultimo corte vencido y recupera una ejecucion pendiente, interrumpida
+o fallida. No repite un corte completado. Una descarga completa recupera tambien jornadas
+anteriores que sigan en memoria del reloj. Si un equipo sigue inaccesible no se pueden garantizar
+sus datos; el fallo queda registrado. No reemplaza un respaldo externo de SQLite.
+
+Se activa automaticamente con `NODE_ENV=production`; `ASISTENCIA_DAILY_SYNC=0` lo desactiva
+y `ASISTENCIA_DAILY_SYNC=1` permite activarlo en otro entorno. No modifica ni borra datos del reloj.
+
 GET /api/events y GET /api/employees leen exclusivamente SQLite. El filtro de periodo y empleado se aplica en SQL por deviceId; las consultas y los PDF no abren conexion al reloj. El historial permanece consultable aunque el equipo este desconectado.
 
 POST /api/device/sync?deviceId=... es la operacion explicita para descargar empleados y marcaciones. Requiere acceso al dispositivo y mantiene una sola descarga en curso por reloj. Los datos se guardan en una transaccion y luego se vuelve a consultar SQLite. Un fallo no borra el historial ni cambia la fecha de ultimo exito.

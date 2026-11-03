@@ -367,7 +367,7 @@ app.get('/api/events', async (req, res, next) => {
   }
 });
 
-// Only this explicit operation downloads attendance from the biometric device.
+// Interactive downloads share the same device queue as the nightly scheduler.
 app.post('/api/device/sync', async (req, res, next) => {
   const device = getRequestDevice(req);
   if (!device) return res.status(404).json({ message: 'Dispositivo no encontrado o acceso denegado.' });
@@ -403,6 +403,10 @@ app.use((error, req, res, _next) => {
 
 if (require.main === module) app.listen(port, process.env.HOST || '127.0.0.1', () => {
   console.log(`API ZKTeco lista en http://127.0.0.1:${port}`);
+  if (process.env.ASISTENCIA_DAILY_SYNC === '1' ||
+      (process.env.NODE_ENV === 'production' && process.env.ASISTENCIA_DAILY_SYNC !== '0')) {
+    require('./services/nightlySync').startNightlySync();
+  }
 });
 
 module.exports = app;

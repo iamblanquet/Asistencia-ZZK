@@ -46,6 +46,11 @@ db.exec(`
     last_success TEXT, last_attempt TEXT, last_error TEXT,
     device_info TEXT CHECK(device_info IS NULL OR json_valid(device_info))
   );
+  CREATE TABLE IF NOT EXISTS nightly_sync_runs (
+    day TEXT PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT,
+    status TEXT NOT NULL CHECK(status IN ('running','success','partial','failed')),
+    results TEXT NOT NULL CHECK(json_valid(results))
+  );
 `);
 
 function legacy(name, fallback) {
