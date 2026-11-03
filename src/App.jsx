@@ -1951,9 +1951,10 @@ function App() {
               </div>
 
               <div className="table-card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                <div className="colaboradores-toolbar">
                   <h3 style={{ margin: 0 }}>Personal Registrado ({filteredEmployees.length})</h3>
-                  {currentUser?.role === 'admin' && <button type="button" className="btn-action btn-action-secondary" onClick={() => setEnrollmentEmployee('')} disabled={!activeDeviceId}><Fingerprint size={16} /> Registrar huella</button>}
+                  <div className="colaboradores-toolbar-actions">
+                    {currentUser?.role === 'admin' && <button type="button" className="btn-action btn-action-secondary colaboradores-enroll-btn" onClick={() => setEnrollmentEmployee('')} disabled={!activeDeviceId}><Fingerprint size={16} /> Registrar huella</button>}
                   <div className="colaboradores-search-wrap" style={{ position: 'relative', width: '250px', maxWidth: '100%' }}>
                     <input 
                       type="search" 
@@ -1975,6 +1976,7 @@ function App() {
                       }}
                     />
                     <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-soft)' }} />
+                    </div>
                   </div>
                 </div>
 
