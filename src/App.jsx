@@ -1940,21 +1940,22 @@ function App() {
             <>
               <div className="tab-header">
                 <h3 style={{ margin: 0 }}>Directorio de Colaboradores</h3>
-                <button 
-                  className="btn-action btn-action-primary" 
-                  style={{ width: 'auto', minWidth: '180px' }}
-                  onClick={downloadEmployeeList}
-                  disabled={!employees.length}
-                >
-                  <FileDown size={16} /> Descargar Lista PDF
-                </button>
+                <div className="colaboradores-header-actions">
+                  {currentUser?.role === 'admin' && <button type="button" className="btn-action btn-action-secondary colaboradores-enroll-btn" onClick={() => setEnrollmentEmployee('')} disabled={!activeDeviceId}><Fingerprint size={16} /> Registrar huella</button>}
+                  <button
+                    className="btn-action btn-action-primary"
+                    onClick={downloadEmployeeList}
+                    disabled={!employees.length}
+                  >
+                    <FileDown size={16} /> Descargar Lista PDF
+                  </button>
+                </div>
               </div>
 
               <div className="table-card">
                 <div className="colaboradores-toolbar">
                   <h3 style={{ margin: 0 }}>Personal Registrado ({filteredEmployees.length})</h3>
                   <div className="colaboradores-toolbar-actions">
-                    {currentUser?.role === 'admin' && <button type="button" className="btn-action btn-action-secondary colaboradores-enroll-btn" onClick={() => setEnrollmentEmployee('')} disabled={!activeDeviceId}><Fingerprint size={16} /> Registrar huella</button>}
                   <div className="colaboradores-search-wrap" style={{ position: 'relative', width: '250px', maxWidth: '100%' }}>
                     <input 
                       type="search" 
