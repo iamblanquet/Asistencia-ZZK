@@ -5,6 +5,7 @@ import DeviceUserAction from './components/DeviceUserAction';
 import BiometricBackups from './components/BiometricBackups';
 import ReportSchedules from './components/ReportSchedules';
 import AssignReportSchedule from './components/AssignReportSchedule';
+import IssueNameTick from './components/IssueNameTick';
 import asistoPdfLogo from './assets/asisto-logo-pdf.png?inline';
 import ExportFormat from './components/ExportFormat';
 import { attendanceCsv, totalsCsv, employeesCsv, eventsCsv, employeeCsvFiles, exportFilePart } from './utils/csv';
@@ -1512,12 +1513,15 @@ function App() {
                   <p className="chart-subtitle">Top de colaboradores con más retardos, salidas tempranas o días incompletos.</p>
                   <div style={{ height: 180, marginTop: '12px' }}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={topIssueEmployees} layout="vertical" margin={{ left: 8, right: 8 }}>
+                      <BarChart data={topIssueEmployees} layout="vertical" margin={{ left: 8, right: 8 }} barSize={7} barGap={2}>
                         <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
                         <XAxis type="number" stroke={chartTheme.axis} fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-                        <YAxis dataKey="employeeName" type="category" stroke={chartTheme.axis} fontSize={11} tickLine={false} axisLine={false} width={90} />
+                        <YAxis dataKey="employeeName" type="category" stroke={chartTheme.axis} fontSize={11} tickLine={false} axisLine={false} width={112} interval={0} tick={<IssueNameTick />} />
                         <RechartsTooltip
-                          contentStyle={{ backgroundColor: chartTheme.tooltipBg, borderColor: chartTheme.tooltipBorder, color: chartTheme.tooltipText }}
+                          position={{ x: 4 }}
+                          wrapperStyle={{ maxWidth: 'calc(100% - 12px)' }}
+                          contentStyle={{ backgroundColor: chartTheme.tooltipBg, borderColor: chartTheme.tooltipBorder, color: chartTheme.tooltipText, maxWidth: 220, whiteSpace: 'normal', overflowWrap: 'anywhere' }}
+                          labelStyle={{ whiteSpace: 'normal', overflowWrap: 'anywhere' }}
                           formatter={(value, name) => [
                             value,
                             name === 'lateCount' ? 'Retardos' : name === 'earlyLeaveCount' ? 'Salidas tempranas' : 'Días incompletos',

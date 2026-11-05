@@ -915,6 +915,23 @@ button:disabled {
   color: var(--text-soft);
 }
 
+.issue-name-window { display: flex; align-items: center; justify-content: flex-end; width: 100%; height: 22px; overflow: hidden; contain: layout paint; font-size: 11px; line-height: 20px; white-space: nowrap; }
+.issue-name-window.is-overflowing { justify-content: flex-start; }
+.issue-name-track { display: flex; flex: none; align-items: center; gap: var(--issue-name-gap); width: max-content; white-space: nowrap; }
+.issue-name-text, .issue-name-copy { display: block; flex: none; white-space: nowrap; }
+.issue-name-track.is-scrolling { animation: issue-name-carousel var(--issue-name-duration) linear 1s infinite; will-change: transform; }
+.issue-name-window:hover .issue-name-track, .issue-name-window:focus .issue-name-track { animation-play-state: paused; }
+.issue-name-window:focus-visible { outline: 1px solid var(--primary); outline-offset: -1px; }
+@keyframes issue-name-carousel {
+  from { transform: translateX(0); }
+  to { transform: translateX(var(--issue-name-travel)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .issue-name-window.is-overflowing { overflow-x: auto; scrollbar-width: thin; }
+  .issue-name-track.is-scrolling { animation: none; transform: none; will-change: auto; }
+  .issue-name-copy { display: none; }
+}
+
 /* Modules row styling */
 .modules-section-title {
   font-size: 0.95rem;
