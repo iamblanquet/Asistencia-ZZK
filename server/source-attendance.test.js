@@ -5,6 +5,112 @@ const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../src/utils/attendance.js'), 'utf8');
 const modulePromise = import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
 const settings = { shiftStart: '08:30', shiftEnd: '18:00', satShiftStart: '08:30', satShiftEnd: '15:00', graceMinutes: 15 };
+const groupSettings = { shiftStart: '07:00', shiftEnd: '16:00', satShiftStart: '07:00', satShiftEnd: '12:00', graceMinutes: 10 };
+const groupedSettings = { ...settings, reportScheduleGroups: [{ id: 'early', name: 'Temprano', versions: [
+  { effectiveFrom: '2026-11-04', settings: groupSettings },
+  { effectiveFrom: '2026-11-10', settings: { ...groupSettings, shiftStart: '06:00', shiftEnd: '15:00' } },
+] }] };
+const groupEmployees = ['1', '2'].map(employeeId => ({ employeeId, name: employeeId, scheduleAssignments: [
+  { effectiveFrom: '2026-11-04', groupId: 'early' }, { effectiveFrom: '2026-11-12', groupId: null },
+] }));
+
+test('group schedules apply to multiple employees with independent entry grace, exit and daily overtime', async () => {
+  const { buildDailySummary } = await modulePromise;
+  const events = [['1', '07:10'], ['1', '16:50'], ['2', '07:11'], ['2', '15:59'], ['3', '08:40'], ['3', '18:00']]
+    .map(([employeeId, time]) => ({ employeeId, timestamp: `2026-11-04T${time}:00` }));
+  const rows = buildDailySummary(events, groupEmployees, groupedSettings);
+  assert.equal(rows[0].scheduleName, 'Temprano');
+  assert.equal(rows[0].isLate, false);
+  assert.equal(rows[0].overtimeMinutes, 60);
+  assert.equal(rows[1].isLate, true);
+  assert.equal(rows[1].lateMinutes, 11);
+  assert.equal(rows[1].earlyLeaveMinutes, 1);
+  assert.equal(rows[2].scheduleName, 'Horario general');
+  assert.equal(rows[2].isLate, false);
+});
+
+test('effective dates select historic versions and return to the general schedule without rewriting past days', async () => {
+  const { resolveReportSchedule } = await modulePromise;
+  const emp = groupEmployees[0];
+  for (const [date, start] of [['2026-11-03', '08:30'], ['2026-11-04', '07:00'], ['2026-11-09', '07:00'], ['2026-11-10', '06:00'], ['2026-11-12', '08:30']]) {
+    assert.equal(resolveReportSchedule(emp, groupedSettings, date).shiftStart, start, date);
+  }
+});
+
+test('general schedule history protects old calculations even when the current flat settings change', async () => {
+  const { buildDailySummary, resolveReportSchedule } = await modulePromise;
+  const history = { ...settings, shiftStart: '06:00', shiftEnd: '15:00', graceMinutes: 0,
+    generalReportSchedule: { revision: 3, versions: [
+      { effectiveFrom: '0001-01-01', settings },
+      { effectiveFrom: '2026-11-04', settings: { ...settings, shiftStart: '07:00', shiftEnd: '16:00', graceMinutes: 10 } },
+      { effectiveFrom: '2026-11-10', settings: { ...settings, shiftStart: '06:00', shiftEnd: '15:00', graceMinutes: 0 } },
+    ] } };
+  const events = [['2026-11-03', '08:40'], ['2026-11-03', '18:50'], ['2026-11-04', '07:10'], ['2026-11-04', '16:50'], ['2026-11-10', '06:01'], ['2026-11-10', '15:49']]
+    .map(([date, time]) => ({ employeeId: '1', timestamp: `${date}T${time}:00` }));
+  const rows = buildDailySummary(events, [], history);
+  assert.deepEqual(rows.map(row => row.shiftStart), ['08:30', '07:00', '06:00']);
+  assert.deepEqual(rows.map(row => row.isLate), [false, false, true]);
+  assert.deepEqual(rows.map(row => row.overtimeMinutes), [60, 60, 0]);
+  assert.deepEqual(rows.map(row => row.isEarlyLeave), [false, false, false]);
+  const employee = { scheduleAssignments: [{ effectiveFrom: '2026-11-04', groupId: 'early' }, { effectiveFrom: '2026-11-12', groupId: null }] };
+  const combined = { ...history, reportScheduleGroups: groupedSettings.reportScheduleGroups };
+  assert.equal(resolveReportSchedule(employee, combined, '2026-11-11').shiftEnd, '15:00');
+  assert.equal(resolveReportSchedule(employee, combined, '2026-11-12').graceMinutes, 0);
+  assert.equal(resolveReportSchedule(employee, combined, '2026-11-03').shiftEnd, '18:00');
+});
+
+test('night shift departure uses the previous general version when the next day changes to a daytime shift', async () => {
+  const { buildDailySummary } = await modulePromise;
+  const night = { ...settings, generalReportSchedule: { versions: [
+    { effectiveFrom: '0001-01-01', settings: { ...settings, shiftStart: '22:00', shiftEnd: '06:00' } },
+    { effectiveFrom: '2026-11-04', settings },
+  ] } };
+  const rows = buildDailySummary(['2026-11-03T22:00:00', '2026-11-04T06:50:00'].map(timestamp => ({ employeeId: '1', timestamp })), [], night);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].dateKey, '2026-11-03');
+  assert.equal(rows[0].shiftEnd, '06:00');
+  assert.equal(rows[0].overtimeMinutes, 60);
+});
+
+test('group Saturday calculations use the group Saturday exit and tolerance', async () => {
+  const { buildDailySummary } = await modulePromise;
+  const events = ['07:10', '12:50'].map(time => ({ employeeId: '1', timestamp: `2026-11-07T${time}:00` }));
+  const row = buildDailySummary(events, groupEmployees, groupedSettings)[0];
+  assert.equal(row.shiftEnd, '12:00');
+  assert.equal(row.scheduledMinutes, 300);
+  assert.equal(row.isLate, false);
+  assert.equal(row.overtimeMinutes, 60);
+});
+
+test('period late minutes exclude entries within each group tolerance', async () => {
+  const { buildDailySummary, buildEmployeeTotals } = await modulePromise;
+  const events = [['1', '07:10'], ['1', '16:00'], ['2', '07:11'], ['2', '16:00']]
+    .map(([employeeId, time]) => ({ employeeId, timestamp: `2026-11-04T${time}:00` }));
+  const totals = buildEmployeeTotals(buildDailySummary(events, groupEmployees, groupedSettings));
+  assert.equal(totals[0].lateMinutes, 0);
+  assert.equal(totals[1].lateMinutes, 11);
+});
+
+test('night groups keep overtime on the prior workday across a Saturday schedule change', async () => {
+  const { buildDailySummary } = await modulePromise;
+  const night = { ...groupedSettings, reportScheduleGroups: [{ id: 'early', name: 'Noche', versions: [{ effectiveFrom: '2026-11-04',
+    settings: { ...groupSettings, shiftStart: '22:00', shiftEnd: '06:00', satShiftStart: '08:00' } }] }] };
+  const events = ['2026-11-06T21:58:00', '2026-11-07T06:50:00'].map(timestamp => ({ employeeId: '1', timestamp }));
+  const rows = buildDailySummary(events, groupEmployees, night);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].dateKey, '2026-11-06');
+  assert.equal(rows[0].overtimeMinutes, 60);
+});
+
+test('event log classifies exits with each group and does not turn duplicate entries into departures', async () => {
+  const { enrichAttendanceEvents } = await modulePromise;
+  const events = [['1', '07:00'], ['1', '16:00'], ['3', '07:00'], ['3', '16:00'], ['2', '07:00'], ['2', '07:03']]
+    .map(([employeeId, time], id) => ({ id, employeeId, timestamp: `2026-11-04T${time}:00` }));
+  const enriched = enrichAttendanceEvents(events, groupEmployees, groupedSettings);
+  assert.equal(enriched[1].eventType, 'Salida');
+  assert.equal(enriched[3].eventType, 'Salida Temprana');
+  assert.equal(enriched[5].eventType, 'Marcación');
+});
 async function calculate(times, date = '2026-10-30') {
   const { buildDailySummary } = await modulePromise;
   return buildDailySummary(times.map(time => ({ employeeId: '1', timestamp: `${date}T${time.length === 5 ? time + ':00' : time}` })), [], settings)[0];

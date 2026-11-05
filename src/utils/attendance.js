@@ -62,6 +62,32 @@ export function decimalHours(minutes) {
   return Number(((minutes || 0) / 60).toFixed(2));
 }
 
+export function normalizeSundaySchedule(settings) {
+  // Versions created before optional Sundays used the weekday hours on Sunday.
+  const legacy = settings.sundayEnabled === undefined;
+  return { ...settings, sundayEnabled: settings.sundayEnabled !== false,
+    sunShiftStart: legacy ? settings.shiftStart : (settings.sunShiftStart || settings.shiftStart),
+    sunShiftEnd: legacy ? settings.shiftEnd : (settings.sunShiftEnd || settings.shiftEnd) };
+}
+
+export function resolveGeneralReportSchedule(settings, dateKey) {
+  const version = [...(settings.generalReportSchedule?.versions || [])].filter(value => value.effectiveFrom <= dateKey)
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom)).at(-1);
+  return normalizeSundaySchedule({ ...settings, ...normalizeSundaySchedule(version?.settings || settings),
+    scheduleName: 'Horario general', scheduleGroupId: null });
+}
+
+export function resolveReportSchedule(employee, settings, dateKey) {
+  const general = resolveGeneralReportSchedule(settings, dateKey);
+  const assignment = [...(employee?.scheduleAssignments || [])]
+    .filter(value => value.effectiveFrom <= dateKey)
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom)).at(-1);
+  const group = settings.reportScheduleGroups?.find(value => value.id === assignment?.groupId);
+  const version = [...(group?.versions || [])].filter(value => value.effectiveFrom <= dateKey)
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom)).at(-1);
+  return version ? { ...general, ...normalizeSundaySchedule(version.settings), scheduleName: group.name, scheduleGroupId: group.id } : general;
+}
+
 export function buildDailySummary(events, employees, settings) {
   const employeeLookup = new Map(employees.map((employee) => [String(employee.employeeId), employee]));
   const grouped = new Map();
@@ -72,16 +98,16 @@ export function buildDailySummary(events, employees, settings) {
       continue;
     }
 
-    const dateKey = workDateForEvent(timestamp, settings);
     const employeeId = String(event.employeeId || event.deviceUserId || '');
+    const employee = employeeLookup.get(employeeId);
+    const dateKey = workDateForEvent(timestamp, settings, employee);
     const key = `${employeeId}::${dateKey}`;
 
     if (!grouped.has(key)) {
-      const employee = employeeLookup.get(employeeId);
       grouped.set(key, {
         dateKey,
         employeeId,
-        employeeName: employee?.name || event.employeeName || `Empleado ${employeeId}`,
+        employeeName: employee?.name || event.employeeName || `Colaborador ${employeeId}`,
         punches: [],
       });
     }
@@ -90,7 +116,7 @@ export function buildDailySummary(events, employees, settings) {
   }
 
   return Array.from(grouped.values())
-    .map((day) => calculateDay(day, settings))
+    .map((day) => calculateDay(day, resolveReportSchedule(employeeLookup.get(day.employeeId), settings, day.dateKey)))
     .sort((a, b) => {
       const byDate = a.dateKey.localeCompare(b.dateKey);
       if (byDate !== 0) {
@@ -123,7 +149,7 @@ export function buildEmployeeTotals(rows) {
     total.days += 1;
     total.workedMinutes += row.workedMinutes;
     total.lateCount += row.isLate ? 1 : 0;
-    total.lateMinutes += row.lateMinutes;
+    total.lateMinutes += row.isLate ? row.lateMinutes : 0;
     total.overtimeMinutes += row.overtimeMinutes;
     total.earlyLeaveCount += row.isEarlyLeave ? 1 : 0;
     total.earlyLeaveMinutes += row.earlyLeaveMinutes;
@@ -147,6 +173,21 @@ export function sortEventsNewestFirst(events) {
   return [...events].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 }
 
+export function enrichAttendanceEvents(events, employees, settings) {
+  const lookup = new Map(employees.map(employee => [String(employee.employeeId), employee]));
+  const rows = new Map(buildDailySummary(events, employees, settings).map(row => [`${row.employeeId}::${row.dateKey}`, row]));
+  return events.map(event => {
+    const timestamp = new Date(event.timestamp);
+    const employeeId = String(event.employeeId || event.deviceUserId || '');
+    if (!Number.isFinite(timestamp.getTime())) return { ...event, eventType: 'Marcacion' };
+    const dateKey = workDateForEvent(timestamp, settings, lookup.get(employeeId));
+    const row = rows.get(`${employeeId}::${dateKey}`);
+    const eventType = +timestamp === +row?.firstPunch ? 'Entrada'
+      : row?.lastPunch && +timestamp === +row.lastPunch ? (row.isEarlyLeave ? 'Salida Temprana' : 'Salida') : 'Marcación';
+    return { ...event, eventType };
+  });
+}
+
 function calculateDay(day, settings) {
   const punches = [...day.punches].sort((a, b) => a - b);
   const attempts = [];
@@ -163,30 +204,27 @@ function calculateDay(day, settings) {
   const firstPunch = attempts[0]?.first || null;
   const lastPunch = hasPair ? attempts[attempts.length - 1].last : null;
   
-  const date = parseInputDate(day.dateKey);
-  const isSaturday = date.getDay() === 6;
-  const shiftStart = isSaturday ? (settings.satShiftStart || '08:00') : settings.shiftStart;
-  const shiftEnd = isSaturday ? (settings.satShiftEnd || '13:00') : settings.shiftEnd;
+  const { shiftStart, shiftEnd, isScheduled } = shiftForDate(day.dateKey, settings);
 
-  const scheduledStart = parseDateTime(day.dateKey, shiftStart);
-  const scheduledEnd = normalizeShiftEnd(day.dateKey, shiftStart, shiftEnd);
-  const graceMinutes = Number(settings.graceMinutes || 0);
+  const scheduledStart = isScheduled ? parseDateTime(day.dateKey, shiftStart) : null;
+  const scheduledEnd = isScheduled ? normalizeShiftEnd(day.dateKey, shiftStart, shiftEnd) : null;
+  const graceMinutes = isScheduled ? Number(settings.graceMinutes || 0) : 0;
 
   const workedMinutes = hasPair
     ? Math.max(0, minutesBetween(firstPunch, lastPunch))
     : 0;
-  const scheduledMinutes = Math.max(0, minutesBetween(scheduledStart, scheduledEnd));
-  const lateMinutes = firstPunch ? Math.max(0, minutesBetween(scheduledStart, firstPunch)) : 0;
-  const isLate = hasPair && lateMinutes > graceMinutes;
+  const scheduledMinutes = isScheduled ? Math.max(0, minutesBetween(scheduledStart, scheduledEnd)) : 0;
+  const lateMinutes = isScheduled && firstPunch ? Math.max(0, minutesBetween(scheduledStart, firstPunch)) : 0;
+  const isLate = isScheduled && hasPair && lateMinutes > graceMinutes;
   // Recognize each extra hour at 50 minutes, separately for each employee/workday.
-  const overtimeMinutes = hasPair
+  const overtimeMinutes = isScheduled && hasPair
     ? Math.max(0, Math.floor((lastPunch - scheduledEnd + 10 * MINUTE) / (60 * MINUTE))) * 60
     : 0;
-  const earlyLeaveMinutes = hasPair ? Math.max(0, minutesBetween(lastPunch, scheduledEnd)) : 0;
+  const earlyLeaveMinutes = isScheduled && hasPair ? Math.max(0, minutesBetween(lastPunch, scheduledEnd)) : 0;
   const isEarlyLeave = earlyLeaveMinutes > 0;
-  const isIncomplete = !hasPair;
+  const isIncomplete = isScheduled && !hasPair;
 
-  const status = isIncomplete
+  const status = !isScheduled ? 'Sin horario' : isIncomplete
     ? 'Incompleto'
     : (isLate && isEarlyLeave)
       ? 'Retardo + S.Temp.'
@@ -206,8 +244,17 @@ function calculateDay(day, settings) {
     duplicatePunchCount: punches.length - attempts.length,
     workedMinutes,
     scheduledMinutes,
+    isScheduled,
     lateMinutes,
     graceMinutes,
+    shiftStart,
+    shiftEnd,
+    scheduleName: settings.scheduleName,
+    scheduleGroupId: settings.scheduleGroupId,
+    reportSchedule: { shiftStart: settings.shiftStart, shiftEnd: settings.shiftEnd,
+      satShiftStart: settings.satShiftStart, satShiftEnd: settings.satShiftEnd,
+      sundayEnabled: settings.sundayEnabled, sunShiftStart: settings.sunShiftStart, sunShiftEnd: settings.sunShiftEnd,
+      graceMinutes: Number(settings.graceMinutes || 0) },
     isLate,
     overtimeMinutes,
     earlyLeaveMinutes,
@@ -217,30 +264,32 @@ function calculateDay(day, settings) {
   };
 }
 
-function workDateForEvent(timestamp, settings) {
+function workDateForEvent(timestamp, defaults, employee) {
   const dateKey = toInputDate(timestamp);
-  const date = parseInputDate(dateKey);
-  const isSaturday = date.getDay() === 6;
-  const shiftStart = isSaturday ? (settings.satShiftStart || '08:00') : settings.shiftStart;
-  const shiftEnd = isSaturday ? (settings.satShiftEnd || '13:00') : settings.shiftEnd;
+  const settings = resolveReportSchedule(employee, defaults, dateKey);
+  const current = shiftForDate(dateKey, settings);
+  const previousDateKey = addDays(dateKey, -1);
+  const previousSettings = resolveReportSchedule(employee, defaults, previousDateKey);
+  const previous = shiftForDate(previousDateKey, previousSettings);
+  if (!previous.isScheduled || previous.shiftEnd >= previous.shiftStart) return dateKey;
 
-  const start = parseDateTime(dateKey, shiftStart);
-  const end = normalizeShiftEnd(dateKey, shiftStart, shiftEnd);
-
-  if (end > start && shiftEnd <= shiftStart && timestamp < start) {
-    const previousDateKey = addDays(dateKey, -1);
-    const prevDate = parseInputDate(previousDateKey);
-    const prevIsSaturday = prevDate.getDay() === 6;
-    const prevShiftStart = prevIsSaturday ? (settings.satShiftStart || '08:00') : settings.shiftStart;
-    const prevShiftEnd = prevIsSaturday ? (settings.satShiftEnd || '13:00') : settings.shiftEnd;
-
-    const previousEnd = normalizeShiftEnd(previousDateKey, prevShiftStart, prevShiftEnd);
-    if (timestamp <= previousEnd) {
-      return previousDateKey;
-    }
-  }
+  // Keep the existing overnight boundary for Saturday exits on an unplanned Sunday.
+  const start = parseDateTime(dateKey, current.shiftStart || settings.shiftStart);
+  const previousEnd = normalizeShiftEnd(previousDateKey, previous.shiftStart, previous.shiftEnd);
+  // Split the rest interval in half so overnight overtime remains on its workday.
+  const cutoff = new Date((+previousEnd + Math.max(+previousEnd, +start)) / 2);
+  if (timestamp < cutoff) return previousDateKey;
 
   return dateKey;
+}
+
+function shiftForDate(dateKey, settings) {
+  const weekday = parseInputDate(dateKey).getDay();
+  if (weekday === 0) return settings.sundayEnabled === false
+    ? { shiftStart: null, shiftEnd: null, isScheduled: false }
+    : { shiftStart: settings.sunShiftStart || settings.shiftStart, shiftEnd: settings.sunShiftEnd || settings.shiftEnd, isScheduled: true };
+  return { shiftStart: weekday === 6 ? (settings.satShiftStart || '08:00') : settings.shiftStart,
+    shiftEnd: weekday === 6 ? (settings.satShiftEnd || '13:00') : settings.shiftEnd, isScheduled: true };
 }
 
 function parseDateTime(dateKey, timeValue) {

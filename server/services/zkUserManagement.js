@@ -6,7 +6,7 @@ const { readTcpPreparedData, validateRecordBuffer } = require('./zkTcpDownload')
 const { enrollmentError, readEnrollmentSnapshot } = require('./zkEnrollment');
 
 function validEmployeeId(value) {
-  if (!/^[1-9]\d{0,8}$/.test(String(value || ''))) throw enrollmentError('ID de empleado invalido.', 400);
+  if (!/^[1-9]\d{0,8}$/.test(String(value || ''))) throw enrollmentError('ID de colaborador invalido.', 400);
   return String(value);
 }
 function validName(value) {

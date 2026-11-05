@@ -36,7 +36,12 @@ test('names and schedules change only for their biometric', () => {
   assert.equal(devices.getEmployees('a')[0].name, 'Ana editada');
   assert.equal(devices.getEmployees('b')[0].name, 'Beto B');
   assert.equal(events.getStoredEvents('a')[0].employeeName, 'Ana editada');
-  devices.updateDevice('a', { shiftEnd: '19:00' });
+  const { getGeneralSchedule, saveGeneralSchedule } = require('./services/reportSchedules');
+  assert.throws(() => devices.updateDevice('a', { shiftEnd: '19:00' }), error => error.statusCode === 400);
+  const general = getGeneralSchedule('a');
+  saveGeneralSchedule('a', { revision: general.revision, effectiveFrom: '2026-01-01',
+    settings: { ...general.versions[0].settings, shiftEnd: '19:00' } }, 'admin');
+  assert.equal(devices.getDeviceById('a').shiftEnd, '19:00');
   assert.equal(devices.getDeviceById('b').shiftEnd, '15:00');
   assert.throws(() => devices.updateEmployeeName('', '1', 'Wrong'));
 });

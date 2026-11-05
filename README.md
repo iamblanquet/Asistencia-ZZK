@@ -2,6 +2,14 @@
 
 > Version actual: almacenamiento SQLite por biometrico. Consultar [START-HERE.md](START-HERE.md) para instalacion y [SQL-STORAGE.md](SQL-STORAGE.md) para migracion y respaldos. Las secciones siguientes describen el funcionamiento original del lector.
 
+Respaldos cifrados de usuarios y huellas: [BIOMETRIC-BACKUP.md](BIOMETRIC-BACKUP.md).
+Registro de huellas para administradores y operadores: [ENROLLMENT.md](ENROLLMENT.md).
+Edicion de nombre y eliminacion de colaboradores por equipo asignado: [DEVICE-USERS.md](DEVICE-USERS.md).
+
+Horarios de reportes por grupos de colaboradores: [REPORT-SCHEDULES.md](REPORT-SCHEDULES.md).
+
+Instalacion como aplicacion PWA y politica de cache: [PWA.md](PWA.md).
+
 Proyecto React + Node para leer usuarios y eventos de asistencia de lectores ZKTeco compatibles con el protocolo local ZK, incluyendo WL20/EWL20 cuando el equipo permite conexion PC por Wi-Fi/red.
 
 ## Requisitos

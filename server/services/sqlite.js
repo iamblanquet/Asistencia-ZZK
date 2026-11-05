@@ -71,6 +71,44 @@ db.exec(`
     status TEXT NOT NULL, created_at TEXT NOT NULL, finished_at TEXT,
     details TEXT NOT NULL CHECK(json_valid(details))
   );
+  CREATE TABLE IF NOT EXISTS biometric_backup_actions (
+    id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id), actor_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('export','preview','restore')), employee_id TEXT,
+    status TEXT NOT NULL, created_at TEXT NOT NULL, finished_at TEXT,
+    details TEXT NOT NULL CHECK(json_valid(details))
+  );
+  CREATE INDEX IF NOT EXISTS biometric_backup_device_created ON biometric_backup_actions(device_id,created_at);
+  CREATE TABLE IF NOT EXISTS report_schedule_groups (
+    device_id TEXT NOT NULL REFERENCES devices(id), id TEXT NOT NULL,
+    name TEXT NOT NULL COLLATE NOCASE, revision INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY(device_id,id), UNIQUE(device_id,name)
+  );
+  CREATE TABLE IF NOT EXISTS report_schedule_versions (
+    device_id TEXT NOT NULL, group_id TEXT NOT NULL, effective_from TEXT NOT NULL,
+    settings TEXT NOT NULL CHECK(json_valid(settings)),
+    PRIMARY KEY(device_id,group_id,effective_from),
+    FOREIGN KEY(device_id,group_id) REFERENCES report_schedule_groups(device_id,id)
+  );
+  CREATE TABLE IF NOT EXISTS employee_schedule_assignments (
+    device_id TEXT NOT NULL, employee_id TEXT NOT NULL, effective_from TEXT NOT NULL,
+    group_id TEXT,
+    PRIMARY KEY(device_id,employee_id,effective_from),
+    FOREIGN KEY(device_id,employee_id) REFERENCES employees(device_id,employee_id),
+    FOREIGN KEY(device_id,group_id) REFERENCES report_schedule_groups(device_id,id)
+  );
+  CREATE TABLE IF NOT EXISTS report_schedule_audit (
+    id INTEGER PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
+    group_id TEXT NOT NULL, actor_id TEXT NOT NULL, created_at TEXT NOT NULL,
+    details TEXT NOT NULL CHECK(json_valid(details))
+  );
+  CREATE TABLE IF NOT EXISTS report_general_schedule_state (
+    device_id TEXT PRIMARY KEY REFERENCES devices(id), revision INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE TABLE IF NOT EXISTS report_general_schedule_versions (
+    device_id TEXT NOT NULL REFERENCES report_general_schedule_state(device_id),
+    effective_from TEXT NOT NULL, settings TEXT NOT NULL CHECK(json_valid(settings)),
+    PRIMARY KEY(device_id,effective_from)
+  );
 `);
 
 function legacy(name, fallback) {
@@ -90,13 +128,13 @@ const putEvent = db.prepare(`INSERT OR IGNORE INTO events
   VALUES (@deviceId,@employeeId,@timestamp,@localDate,@localTime,@source,@deviceUserId,@uid)`);
 function employee(deviceId, value) {
   putEmployee.run({ deviceId: String(deviceId), employeeId: String(value.employeeId),
-    name: value.name || value.employeeName || `Empleado ${value.employeeId}`,
+    name: value.name || value.employeeName || `Colaborador ${value.employeeId}`,
     uid: value.uid == null ? null : String(value.uid), role: value.role ?? null,
     cardNo: value.cardNo == null ? null : String(value.cardNo) });
 }
 function insertEvent(deviceId, value, source) {
   const time = new Date(value.timestamp);
-  if (!value.employeeId || !Number.isFinite(time.getTime())) throw new Error('Evento sin empleado o fecha valida.');
+  if (!value.employeeId || !Number.isFinite(time.getTime())) throw new Error('Evento sin colaborador o fecha valida.');
   if (!db.prepare('SELECT 1 FROM employees WHERE device_id=? AND employee_id=?').get(deviceId, String(value.employeeId))) employee(deviceId, value);
   return putEvent.run({ deviceId, employeeId: String(value.employeeId), timestamp: time.toISOString(),
     localDate: value.localDate || `${time.getFullYear()}-${String(time.getMonth()+1).padStart(2,'0')}-${String(time.getDate()).padStart(2,'0')}`,

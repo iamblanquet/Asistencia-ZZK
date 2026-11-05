@@ -1,23 +1,33 @@
 const crypto = require('node:crypto');
 const { db, employee } = require('./sqlite');
+const { getScheduleAssignments, initializeGeneralSchedules, currentGeneralSettings } = require('./reportSchedules');
+initializeGeneralSchedules();
 const defaults = { model: 'WL20/EWL20', protocol: 'zk', port: 4370, timeout: 15000, inport: 4000, shiftStart: '08:00', shiftEnd: '17:00', satShiftStart: '08:00', satShiftEnd: '13:00', graceMinutes: 10 };
-function normalizeDevice(value) { return { ...defaults, ...value, id: String(value.id) }; }
+function normalizeDevice(value) { return { ...defaults, ...value, ...currentGeneralSettings(String(value.id)), id: String(value.id) }; }
 function getDevices() {
   return db.prepare('SELECT config FROM devices WHERE deleted_at IS NULL ORDER BY rowid').all().map(row => normalizeDevice(JSON.parse(row.config)));
 }
 function getDeviceById(id) { return getDevices().find(d => d.id === String(id)) || null; }
 function addDevice(value) {
-  const device = normalizeDevice({ ...value, id: `dev-${crypto.randomUUID()}` });
+  const device = normalizeDevice({ sundayEnabled: false, ...value, id: `dev-${crypto.randomUUID()}` });
   db.prepare('INSERT INTO devices(id,config) VALUES (?,?)').run(device.id, JSON.stringify(device));
+  initializeGeneralSchedules(device.id);
   return device;
 }
 function updateDevice(id, value) {
   const old = getDeviceById(id);
   if (!old) return null;
   const defined = Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
-  const device = normalizeDevice({ ...old, ...defined, id: old.id });
+  const scheduleFields = ['shiftStart', 'shiftEnd', 'satShiftStart', 'satShiftEnd', 'sundayEnabled', 'sunShiftStart', 'sunShiftEnd', 'graceMinutes'];
+  if (scheduleFields.some(field => defined[field] !== undefined && defined[field] !== old[field])) {
+    const message = 'Cambie el horario general desde Personal > Horarios, indicando su fecha de vigencia.';
+    throw Object.assign(new Error(message), { statusCode: 400, publicMessage: message });
+  }
+  for (const field of scheduleFields) delete defined[field];
+  const stored = JSON.parse(db.prepare('SELECT config FROM devices WHERE id=?').get(old.id).config);
+  const device = { ...stored, ...defined, id: old.id };
   db.prepare('UPDATE devices SET config=? WHERE id=? AND deleted_at IS NULL').run(JSON.stringify(device), old.id);
-  return device;
+  return normalizeDevice(device);
 }
 function deleteDevice(id) {
   db.prepare('UPDATE devices SET deleted_at=? WHERE id=?').run(new Date().toISOString(), String(id));
@@ -30,7 +40,7 @@ function getEmployeeOverrides(deviceId) {
 function updateEmployeeName(deviceId, employeeId, name) {
   if (!getDeviceById(deviceId)) throw new Error('Biometrico no encontrado.');
   const updated = db.prepare('UPDATE employees SET override_name=? WHERE device_id=? AND employee_id=?').run(String(name).trim(), String(deviceId), String(employeeId));
-  if (!updated.changes) throw new Error('Empleado no encontrado en este biometrico.');
+  if (!updated.changes) throw new Error('Colaborador no encontrado en este biometrico.');
   return { deviceId, employeeId, name };
 }
 function saveEmployees(deviceId, values) {
@@ -50,10 +60,12 @@ function saveEmployees(deviceId, values) {
 }
 function getEmployees(deviceId) {
   if (!deviceId) throw new Error('Biometrico requerido.');
+  const assignments = getScheduleAssignments(String(deviceId));
   return db.prepare(`SELECT e.employee_id AS employeeId,COALESCE(e.override_name,e.name) AS name,
     e.uid,e.role,e.card_no AS cardNo,s.present AS devicePresent
     FROM employees e LEFT JOIN employee_device_status s ON s.device_id=e.device_id AND s.employee_id=e.employee_id
     WHERE e.device_id=? ORDER BY e.employee_id`).all(String(deviceId))
-    .map(value => ({ ...value, devicePresent: value.devicePresent === null ? null : Boolean(value.devicePresent) }));
+    .map(value => ({ ...value, devicePresent: value.devicePresent === null ? null : Boolean(value.devicePresent),
+      scheduleAssignments: assignments.get(value.employeeId) || [] }));
 }
 module.exports = { getDevices, getDeviceById, addDevice, updateDevice, deleteDevice, getEmployeeOverrides, updateEmployeeName, saveEmployees, getEmployees };

@@ -1,6 +1,7 @@
 const { db } = require('./sqlite');
 const { getEmployees } = require('./db');
 const { getStoredEvents } = require('./eventStore');
+const { listScheduleGroups, getGeneralSchedule } = require('./reportSchedules');
 
 function getSavedAttendance(device, filters = {}) {
   for (const value of [filters.from, filters.to]) {
@@ -19,15 +20,29 @@ function getSavedAttendance(device, filters = {}) {
   }
   const status = db.prepare('SELECT * FROM device_sync_status WHERE device_id=?').get(device.id);
   const seen = new Set();
-  const events = getStoredEvents(device.id, filters).filter(event => {
+  const padded = { ...filters };
+  if (filters.includeScheduleEdges) {
+    const shiftDate = (value, days) => {
+      const date = new Date(`${value}T12:00:00Z`);
+      date.setUTCDate(date.getUTCDate() + days);
+      return date.toISOString().slice(0, 10);
+    };
+    if (filters.from) padded.from = shiftDate(filters.from, -1);
+    if (filters.to) padded.to = shiftDate(filters.to, 1);
+  }
+  const saved = getStoredEvents(device.id, padded).filter(event => {
     // Keep the same minute-level duplicate handling as the previous live query.
     const key = `${event.employeeId}:${event.localDate}:${event.localTime}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   }).map(event => ({ ...event, id: `${device.id}:${event.employeeId}:${event.timestamp}` }));
+  const inRange = event => (!filters.from || event.localDate >= filters.from) && (!filters.to || event.localDate <= filters.to);
+  const events = saved.filter(inRange);
   return {
-    device, employees: getEmployees(device.id), events,
+    device, employees: getEmployees(device.id), events, reportScheduleGroups: listScheduleGroups(device.id),
+    generalReportSchedule: getGeneralSchedule(device.id),
+    boundaryEvents: filters.includeScheduleEdges ? saved.filter(event => !inRange(event)) : [],
     deviceInfo: status?.device_info ? JSON.parse(status.device_info) : null,
     fetchedAt: status?.last_success || null,
     sync: { lastSuccessAt: status?.last_success || null, lastAttemptAt: status?.last_attempt || null, lastError: status?.last_error || null },

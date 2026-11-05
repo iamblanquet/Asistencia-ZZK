@@ -207,7 +207,7 @@ function normalizeStoredEvents(records, employeeIndex) {
       const deviceUserId = cleanValue(record.deviceUserId || record.employeeId || record.userId);
       const employee = employeeIndex.get(deviceUserId);
       const employeeId = employee?.employeeId || cleanValue(record.employeeId) || deviceUserId;
-      const employeeName = employee?.name || cleanValue(record.employeeName) || `Empleado ${employeeId || 'sin numero'}`;
+      const employeeName = employee?.name || cleanValue(record.employeeName) || `Colaborador ${employeeId || 'sin numero'}`;
 
       return {
         id: `${record.source || 'local'}-${employeeId}-${timestamp.getTime()}`,
@@ -227,7 +227,7 @@ function normalizeStoredEvents(records, employeeIndex) {
 async function readUsersCompatible(device) {
   if (device.connectionType === 'tcp') return readTcpUsers(device.zklibTcp);
   const result = await device.getUsers();
-  if (!result) throw new Error('No se pudo descargar el listado de empleados.');
+  if (!result) throw new Error('No se pudo descargar el listado de colaboradores.');
   return result;
 }
 
@@ -288,7 +288,7 @@ function normalizeEmployees(users, deviceId) {
       const userId = cleanValue(user.userId);
       const employeeId = userId || uid;
       const dbName = overrides[String(employeeId)];
-      const name = dbName || cleanValue(user.name) || `Empleado ${employeeId || uid}`;
+      const name = dbName || cleanValue(user.name) || `Colaborador ${employeeId || uid}`;
 
       return {
         uid,
@@ -328,7 +328,7 @@ function normalizeEvents(records, employeeIndex) {
       const deviceUserId = cleanValue(record.deviceUserId || record.userId || record.uid || record.userSn);
       const employee = employeeIndex.get(deviceUserId);
       const employeeId = employee?.employeeId || deviceUserId;
-      const employeeName = employee?.name || `Empleado ${employeeId || 'sin numero'}`;
+      const employeeName = employee?.name || `Colaborador ${employeeId || 'sin numero'}`;
       const localDate = toDateKey(timestamp);
 
       return {

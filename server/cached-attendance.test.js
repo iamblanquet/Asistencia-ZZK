@@ -165,15 +165,13 @@ test('operators cannot synchronize an unassigned clock or without device identit
   assert.equal(connectCalls, before);
 });
 
-test('fingerprint endpoints are administrator-only and always require biometric identity', async () => {
+test('backups remain administrator-only while enrollment and user management are device-scoped', async () => {
   createUser({ username: 'finger-operator', password, assignedDevices: ['a'] });
   const auth = { ...headers, Authorization: 'Bearer ' + authenticate('finger-operator', password).token };
   const before = connectCalls;
-  for (const [path, method] of [['/api/device/fingerprints?deviceId=a&employeeId=1', 'GET'],
-    ['/api/device/users/1?deviceId=a', 'GET'], ['/api/device/users/1?deviceId=a', 'PUT'], ['/api/device/users/1?deviceId=a', 'DELETE'],
-    ['/api/device/enrollment-next-id?deviceId=a', 'GET'],
-    ['/api/device/enrollments?deviceId=a', 'POST'], ['/api/device/enrollments?deviceId=a', 'GET'],
-    ['/api/device/enrollments/unknown/cancel?deviceId=a', 'POST']]) {
+  for (const [path, method] of [['/api/device/biometric-backups/download?deviceId=a', 'POST'], ['/api/device/biometric-backups/preview?deviceId=a', 'POST'],
+    ['/api/device/biometric-backups/restore?deviceId=a', 'POST'], ['/api/device/biometric-backups/history?deviceId=a', 'GET'],
+    ['/api/device/biometric-backups/recovery-key?deviceId=a', 'GET']]) {
     assert.equal((await request(path, method, auth)).status, 403);
   }
   assert.equal((await request('/api/device/enrollments', 'POST')).status, 400);
@@ -181,5 +179,24 @@ test('fingerprint endpoints are administrator-only and always require biometric 
   assert.equal((await request('/api/device/enrollments?deviceId=a', 'POST')).status, 400);
   assert.equal((await request('/api/device/enrollments/unknown?deviceId=b')).status, 404);
   assert.equal((await request('/api/device/enrollments?deviceId=a')).data.job, null);
+  assert.equal((await request('/api/device/enrollments?deviceId=a', 'GET', auth)).data.job, null);
+  assert.equal((await request('/api/device/enrollments/unknown?deviceId=a', 'GET', auth)).status, 404);
+  assert.equal((await request('/api/device/enrollments/unknown/cancel?deviceId=a', 'POST', auth)).status, 404);
+  for (const [path, method] of [['/api/device/fingerprints?deviceId=b&employeeId=1', 'GET'],
+    ['/api/device/enrollment-next-id?deviceId=b', 'GET'], ['/api/device/enrollments?deviceId=b', 'GET'],
+    ['/api/device/enrollments?deviceId=b', 'POST'], ['/api/device/enrollments/unknown?deviceId=b', 'GET'],
+    ['/api/device/enrollments/unknown/cancel?deviceId=b', 'POST']]) assert.equal((await request(path, method, auth)).status, 404);
+  assert.equal(connectCalls, before);
+});
+
+test('backup endpoints require an authenticated administrator and an explicit existing biometric', async () => {
+  const before = connectCalls;
+  assert.equal((await request('/api/device/biometric-backups/history?deviceId=a', 'GET', {})).status, 401);
+  assert.equal((await request('/api/device/biometric-backups/history')).status, 400);
+  assert.equal((await request('/api/device/biometric-backups/history?deviceId=unknown')).status, 404);
+  assert.deepEqual((await request('/api/device/biometric-backups/history?deviceId=b')).data.actions, []);
+  const invalid = await fetch(base + '/api/device/biometric-backups/download?deviceId=a', { method: 'POST', headers, body: JSON.stringify({ confirmed: false }) });
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json()).detail, undefined);
   assert.equal(connectCalls, before);
 });

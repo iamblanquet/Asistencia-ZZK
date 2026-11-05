@@ -2,6 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { preferredDevice, rememberDevice } from './utils/deviceSelection';
 import FingerprintEnrollment from './components/FingerprintEnrollment';
 import DeviceUserAction from './components/DeviceUserAction';
+import BiometricBackups from './components/BiometricBackups';
+import ReportSchedules from './components/ReportSchedules';
+import AssignReportSchedule from './components/AssignReportSchedule';
+import asistoPdfLogo from './assets/asisto-logo-pdf.png?inline';
+import ExportFormat from './components/ExportFormat';
+import { attendanceCsv, totalsCsv, employeesCsv, eventsCsv, employeeCsvFiles, exportFilePart } from './utils/csv';
+import { zip, strToU8 } from 'fflate';
 import {
   AlertTriangle,
   ArrowDownWideNarrow,
@@ -14,6 +21,7 @@ import {
   Lock,
   RefreshCw,
   Search,
+  ShieldCheck,
   User,
   Users,
   Wifi,
@@ -60,6 +68,8 @@ import {
   addDays,
   buildDailySummary,
   buildEmployeeTotals,
+  enrichAttendanceEvents,
+  resolveReportSchedule,
   filterAndSortDailyRows,
   sortEventsNewestFirst,
   dateLabel,
@@ -139,10 +149,14 @@ function App() {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [enrollmentEmployee, setEnrollmentEmployee] = useState(null);
   const [deviceUserAction, setDeviceUserAction] = useState(null);
+  const [backupsOpen, setBackupsOpen] = useState(false);
+  const [schedulesOpen, setSchedulesOpen] = useState(null);
+  const [scheduleEmployee, setScheduleEmployee] = useState(null);
   const [range, setRange] = useState({ from: defaultFrom, to: defaultTo });
   const [schedule, setSchedule] = useState(initialSchedule);
   const [employees, setEmployees] = useState([]);
   const [events, setEvents] = useState([]);
+  const [boundaryEvents, setBoundaryEvents] = useState([]);
   const [selectedEmployee, setSelectedEmployee] = useState('all');
   const [employeeQuery, setEmployeeQuery] = useState('');
   const [attendanceStatus, setAttendanceStatus] = useState('all');
@@ -153,6 +167,9 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [syncingDeviceIds, setSyncingDeviceIds] = useState([]);
   const [downloading, setDownloading] = useState(false);
+  const [reportFormat, setReportFormat] = useState('pdf');
+  const [directoryFormat, setDirectoryFormat] = useState('pdf');
+  const [eventView, setEventView] = useState('events');
   const [error, setError] = useState('');
 
   // Nuevos estados para administración de múltiples biométricos
@@ -356,59 +373,21 @@ function App() {
   }, [employeeQuery, events, selectedEmployee]);
 
   const enrichedEvents = useMemo(() => {
-    const groups = {};
-    for (const event of events) {
-      const dateKey = event.localDate || event.timestamp.split('T')[0];
-      const key = `${event.employeeId}::${dateKey}`;
-      if (!groups[key]) {
-        groups[key] = [];
-      }
-      groups[key].push(event);
-    }
-
-    for (const key in groups) {
-      groups[key].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    }
-
-    return sortEventsNewestFirst(visibleEvents.map((event) => {
-      const dateKey = event.localDate || event.timestamp.split('T')[0];
-      const key = `${event.employeeId}::${dateKey}`;
-      const dayEvents = groups[key] || [];
-
-      let type = 'Marcación';
-      if (dayEvents.length > 0) {
-        if (event.id === dayEvents[0].id) {
-          type = 'Entrada';
-        } else if (dayEvents.length > 1 && event.id === dayEvents[dayEvents.length - 1].id) {
-          const date = new Date(event.timestamp);
-          const isSaturday = date.getDay() === 6;
-          const shiftEnd = isSaturday ? (schedule.satShiftEnd || '13:00') : schedule.shiftEnd;
-          
-          const [endHours, endMinutes] = shiftEnd.split(':').map(Number);
-          const eventHours = date.getHours();
-          const eventMinutes = date.getMinutes();
-          
-          const eventTimeInMinutes = eventHours * 60 + eventMinutes;
-          const shiftEndTimeInMinutes = endHours * 60 + endMinutes;
-          
-          if (eventTimeInMinutes < shiftEndTimeInMinutes) {
-            type = 'Salida Temprana';
-          } else {
-            type = 'Salida';
-          }
-        }
-      }
-
-      return {
-        ...event,
-        eventType: type,
-      };
-    }));
-  }, [events, visibleEvents, schedule]);
+    const visible = new Set(visibleEvents.map(event => event.id));
+    return sortEventsNewestFirst(enrichAttendanceEvents([...events, ...boundaryEvents], employees, schedule)
+      .filter(event => visible.has(event.id)));
+  }, [events, boundaryEvents, employees, visibleEvents, schedule]);
 
   const summaryRows = useMemo(
-    () => buildDailySummary(visibleEvents, employees, schedule),
-    [employees, schedule, visibleEvents],
+    () => {
+      const query = employeeQuery.toLowerCase().trim();
+      const reportEvents = [...events, ...boundaryEvents].filter(event =>
+        (selectedEmployee === 'all' || String(event.employeeId) === selectedEmployee)
+        && (!query || `${event.employeeId} ${event.employeeName}`.toLowerCase().includes(query)));
+      return buildDailySummary(reportEvents, employees, schedule)
+        .filter(row => (!range.from || row.dateKey >= range.from) && (!range.to || row.dateKey <= range.to));
+    },
+    [employees, schedule, events, boundaryEvents, selectedEmployee, employeeQuery, range],
   );
 
   const totals = useMemo(() => buildEmployeeTotals(summaryRows), [summaryRows]);
@@ -487,7 +466,7 @@ function App() {
   const topPunctualEmployees = useMemo(() => {
     const empData = {};
     summaryRows.forEach((row) => {
-      if (!row.firstPunch) return;
+      if (!row.firstPunch || row.isScheduled === false) return;
       const dateObj = new Date(row.firstPunch);
       const minutes = dateObj.getHours() * 60 + dateObj.getMinutes();
       
@@ -496,10 +475,14 @@ function App() {
           employeeId: row.employeeId,
           employeeName: row.employeeName,
           minutesSum: 0,
+          onTimeDays: 0,
+          lateMinutes: 0,
           count: 0,
         };
       }
       empData[row.employeeId].minutesSum += minutes;
+      empData[row.employeeId].onTimeDays += row.lateMinutes <= row.graceMinutes ? 1 : 0;
+      empData[row.employeeId].lateMinutes += Math.max(0, row.lateMinutes - row.graceMinutes);
       empData[row.employeeId].count += 1;
     });
 
@@ -512,23 +495,26 @@ function App() {
         return {
           ...emp,
           avgMinutes,
+          onTimeRate: emp.onTimeDays / emp.count,
           formattedTime,
         };
       })
-      .sort((a, b) => a.avgMinutes - b.avgMinutes)
+      .sort((a, b) => b.onTimeRate - a.onTimeRate || (a.lateMinutes / a.count) - (b.lateMinutes / b.count)
+        || a.employeeName.localeCompare(b.employeeName, 'es'))
       .slice(0, 5);
   }, [summaryRows]);
 
   const distributionData = useMemo(() => {
-    let ok = 0, late = 0, early = 0, open = 0, both = 0;
+    let ok = 0, late = 0, early = 0, open = 0, both = 0, unscheduled = 0;
     summaryRows.forEach(row => {
-       if (row.isIncomplete) open++;
+       if (row.isScheduled === false) unscheduled++;
+       else if (row.isIncomplete) open++;
        else if (row.isEarlyLeave && row.isLate) both++;
        else if (row.isLate) late++;
        else if (row.isEarlyLeave) early++;
        else ok++;
     });
-    const total = ok + late + early + open + both || 1;
+    const total = ok + late + early + open + both + unscheduled || 1;
     const getPercent = (v) => Math.round((v / total) * 100);
     return [
       { name: 'A tiempo', value: ok, percentage: getPercent(ok), color: '#10b981' },
@@ -536,6 +522,7 @@ function App() {
       { name: 'S. Temprana', value: early, percentage: getPercent(early), color: '#6B7280' },
       { name: 'Incompleto', value: open, percentage: getPercent(open), color: '#f59e0b' },
       { name: 'Retardo + S. temprana', value: both, percentage: getPercent(both), color: '#ef4444' },
+      { name: 'Sin horario', value: unscheduled, percentage: getPercent(unscheduled), color: '#64748b' },
     ].filter(d => d.value > 0);
   }, [summaryRows]);
 
@@ -568,6 +555,7 @@ function App() {
       loadedDeviceId.current = deviceId;
       setEmployees([]);
       setEvents([]);
+      setBoundaryEvents([]);
       setDeviceInfo(null);
       setFetchedAt(null);
       setSelectedEmployee('all');
@@ -582,6 +570,7 @@ function App() {
       const params = new URLSearchParams({
         from: customRange.from,
         to: customRange.to,
+        includeScheduleEdges: '1',
       });
       if (deviceId) {
         params.set('deviceId', deviceId);
@@ -591,6 +580,7 @@ function App() {
       if (deviceId && payload.device?.id !== deviceId) throw new Error('La respuesta no corresponde al biometrico seleccionado.');
       setEmployees(payload.employees || []);
       setEvents(payload.events || []);
+      setBoundaryEvents(payload.boundaryEvents || []);
       if (payload.device) {
         setDevice(payload.device);
         setActiveDeviceId(payload.device.id);
@@ -599,7 +589,12 @@ function App() {
           shiftEnd: payload.device.shiftEnd || '17:00',
           satShiftStart: payload.device.satShiftStart || '08:00',
           satShiftEnd: payload.device.satShiftEnd || '13:00',
+          sundayEnabled: payload.device.sundayEnabled,
+          sunShiftStart: payload.device.sunShiftStart,
+          sunShiftEnd: payload.device.sunShiftEnd,
           graceMinutes: payload.device.graceMinutes !== undefined ? payload.device.graceMinutes : 10,
+          reportScheduleGroups: payload.reportScheduleGroups || [],
+          generalReportSchedule: payload.generalReportSchedule,
         });
       }
       setDeviceInfo(payload.deviceInfo || null);
@@ -608,6 +603,7 @@ function App() {
       if (requestId !== latestLoad.current) return;
       setEmployees([]);
       setEvents([]);
+      setBoundaryEvents([]);
       setDevice(requestError.device || device);
       setError(requestError.message);
     } finally {
@@ -717,11 +713,13 @@ function App() {
         port: Number(editPort),
         model: editModel,
         protocol: editProtocol,
-        shiftStart: editShiftStart,
-        shiftEnd: editShiftEnd,
-        satShiftStart: editSatShiftStart,
-        satShiftEnd: editSatShiftEnd,
-        graceMinutes: Number(editGraceMinutes)
+        ...(selectedEditDeviceId === 'new' ? {
+          shiftStart: editShiftStart,
+          shiftEnd: editShiftEnd,
+          satShiftStart: editSatShiftStart,
+          satShiftEnd: editSatShiftEnd,
+          graceMinutes: Number(editGraceMinutes),
+        } : {}),
       };
       
       const savedDevice = await apiRequest(
@@ -864,18 +862,35 @@ function App() {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
       doc.setTextColor(107, 114, 128);
-      doc.text(`ASISTO By ITZ | OIL & GAS  —  Pág. ${i} de ${pageCount}`, 306, 765, { align: 'center' });
+      doc.text(`ASISTO | Pag. ${i} de ${pageCount}`, 306, 765, { align: 'center' });
     }
 
     doc.save(`directorio-colaboradores-${(device.name || 'biometrico').replace(/\s+/g, '_')}.pdf`);
   }
 
-  async function downloadReport(mode = 'consolidated') {
+  async function downloadDirectory() {
+    if (directoryFormat === 'pdf') { downloadEmployeeList(); return; }
+    const deviceId = activeDeviceId;
+    if (!deviceId) return;
+    setDownloading(true); setError('');
+    try {
+      const payload = await getJson(`/api/employees?deviceId=${encodeURIComponent(deviceId)}`);
+      if (payload.device?.id !== deviceId) throw new Error('La respuesta no corresponde al biometrico seleccionado.');
+      const day = todayInputValue();
+      const settings = { ...payload.device, reportScheduleGroups: payload.reportScheduleGroups || [], generalReportSchedule: payload.generalReportSchedule };
+      const roster = (payload.employees || []).map(employee => ({ ...employee, scheduleName: resolveReportSchedule(employee, settings, day).scheduleName }));
+      saveExport(employeesCsv(roster, payload.device, day, employeeQuery), `colaboradores-${exportFilePart(payload.device.name)}-${day}.csv`, 'text/csv;charset=utf-8');
+    } catch (requestError) { setError(requestError.message); }
+    finally { setDownloading(false); }
+  }
+
+  async function downloadReport(mode = 'consolidated', format = reportFormat) {
     setDownloading(true);
     setError('');
 
     const reportTo = range.to || todayInputValue();
     const reportFrom = range.from || addDays(reportTo, -14);
+    const reportEmployee = activeTab === 'general' ? 'all' : selectedEmployee;
 
     try {
       if (!activeDeviceId) throw new Error('Seleccione el biometrico.');
@@ -883,24 +898,49 @@ function App() {
         from: reportFrom,
         to: reportTo,
         deviceId: activeDeviceId,
+        includeScheduleEdges: '1',
       });
 
-      if (selectedEmployee !== 'all') {
-        params.set('employeeId', selectedEmployee);
+      if (reportEmployee !== 'all') {
+        params.set('employeeId', reportEmployee);
       }
 
       const payload = await getJson(`/api/events?${params.toString()}`);
-      const reportEmployees = payload.employees || employees;
-      const reportRows = buildDailySummary(payload.events || [], reportEmployees, schedule);
+      if (payload.device?.id !== params.get('deviceId')) throw new Error('La respuesta no corresponde al biometrico seleccionado.');
+      const reportEmployees = payload.employees || [];
+      const reportSchedule = { ...initialSchedule, ...(payload.device || device), reportScheduleGroups: payload.reportScheduleGroups || [],
+        generalReportSchedule: payload.generalReportSchedule };
+      const query = activeTab === 'general' ? '' : employeeQuery.trim().toLocaleLowerCase('es');
+      const daily = buildDailySummary([...(payload.events || []), ...(payload.boundaryEvents || [])], reportEmployees, reportSchedule)
+        .filter(row => row.dateKey >= reportFrom && row.dateKey <= reportTo
+          && (!query || `${row.employeeId} ${row.employeeName}`.toLocaleLowerCase('es').includes(query)));
+      const reportRows = filterAndSortDailyRows(daily, activeTab === 'asistencias' ? attendanceStatus : 'all', attendanceDescending);
+      if (!reportRows.length) throw new Error('No hay asistencias para exportar con esos filtros.');
       const reportTotals = buildEmployeeTotals(reportRows);
+      const reportRange = { from: reportFrom, to: reportTo };
+      const prefix = `${exportFilePart(payload.device.name)}-${reportFrom}-${reportTo}`;
+
+      if (format === 'csv') {
+        if (mode === 'summary') {
+          saveExport(totalsCsv(reportTotals, payload.device, reportRange), `resumen-${prefix}.csv`, 'text/csv;charset=utf-8');
+        } else if (mode === 'individual_files' && reportEmployee === 'all') {
+          const files = Object.fromEntries(employeeCsvFiles(reportRows, payload.device, reportRange).map(file => [file.filename, strToU8(file.content)]));
+          files['resumen-general.csv'] = strToU8(totalsCsv(reportTotals, payload.device, reportRange));
+          const archive = await new Promise((resolve, reject) => zip(files, { level: 6 }, (error, result) => error ? reject(error) : resolve(result)));
+          saveExport(archive, `asistencias-por-colaborador-${prefix}.zip`, 'application/zip');
+        } else {
+          saveExport(attendanceCsv(reportRows, payload.device, reportRange), `asistencias-${prefix}${reportEmployee === 'all' ? '' : '-' + exportFilePart(reportEmployee)}.csv`, 'text/csv;charset=utf-8');
+        }
+        return;
+      }
 
       createPdf({
         rows: reportRows,
         totals: reportTotals,
         range: { from: reportFrom, to: reportTo },
-        schedule,
+        schedule: reportSchedule,
         device: payload.device || device,
-        selectedEmployee,
+        selectedEmployee: reportEmployee,
         mode,
       });
     } catch (requestError) {
@@ -908,6 +948,27 @@ function App() {
     } finally {
       setDownloading(false);
     }
+  }
+
+  async function downloadEventsCsv() {
+    const deviceId = activeDeviceId;
+    if (!deviceId) return;
+    setDownloading(true); setError('');
+    try {
+      const params = new URLSearchParams({ deviceId, from: range.from, to: range.to, includeScheduleEdges: '1' });
+      if (selectedEmployee !== 'all') params.set('employeeId', selectedEmployee);
+      const payload = await getJson(`/api/events?${params}`);
+      if (payload.device?.id !== deviceId) throw new Error('La respuesta no corresponde al biometrico seleccionado.');
+      const visible = new Set((payload.events || []).map(event => event.id));
+      const query = employeeQuery.trim().toLocaleLowerCase('es');
+      const data = sortEventsNewestFirst(enrichAttendanceEvents([...(payload.events || []), ...(payload.boundaryEvents || [])], payload.employees || [],
+        { ...payload.device, reportScheduleGroups: payload.reportScheduleGroups || [], generalReportSchedule: payload.generalReportSchedule }))
+        .filter(event => visible.has(event.id) && (!query || `${event.employeeId} ${event.employeeName}`.toLocaleLowerCase('es').includes(query)));
+      if (!data.length) throw new Error('No hay eventos para exportar con esos filtros.');
+      saveExport(eventsCsv(data, payload.device, { from: params.get('from'), to: params.get('to') }),
+        `eventos-${exportFilePart(payload.device.name)}-${params.get('from')}-${params.get('to')}.csv`, 'text/csv;charset=utf-8');
+    } catch (requestError) { setError(requestError.message); }
+    finally { setDownloading(false); }
   }
 
   function updateRange(key, value) {
@@ -1227,7 +1288,7 @@ function App() {
           </div>
         </header>
 
-        <div className="content-body">
+        <div className={`content-body${['asistencias', 'eventos', 'colaboradores'].includes(activeTab) ? ' data-view-body' : ''}`}>
           {error && (
             <div className="alert-box">
               <AlertTriangle size={18} />
@@ -1268,8 +1329,8 @@ function App() {
                 <div className="card quick-attendance-card top-quick-card">
                   <div className="quick-attendance-head compact">
                     <div>
-                      <h3 style={{ marginTop: 0 }}>Quincena</h3>
-                      <p className="chart-subtitle">PDF consolidado con todos los empleados y datos completos del periodo actual.</p>
+                      <div className="quick-export-title"><h3 style={{ marginTop: 0 }}>Quincena</h3><ExportFormat value={reportFormat} onChange={setReportFormat} label="Formato de consulta rapida" disabled={downloading} /></div>
+                      <p className="chart-subtitle">Reporte consolidado con todos los colaboradores y datos completos del periodo actual.</p>
                     </div>
                   </div>
 
@@ -1286,7 +1347,7 @@ function App() {
                     disabled={downloading || loading}
                   >
                     <FileDown size={16} className={downloading ? 'spin' : ''} />
-                    {downloading ? 'Generando PDF...' : 'Descargar PDF'}
+                    {downloading ? 'Generando...' : `Descargar ${reportFormat.toUpperCase()}`}
                   </button>
                 </div>
 
@@ -1328,7 +1389,7 @@ function App() {
                 ) : (
                   <div className="card top-device-card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <h3 style={{ margin: 0 }}>Horario y Jornada Activa</h3>
+                      <h3 style={{ margin: 0 }}>Horario general</h3>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.74rem', fontWeight: 700, color: hasSavedData ? 'var(--success)' : 'var(--text-soft)' }}>
                         <span className={`status-dot ${hasSavedData ? 'online' : 'offline'}`} />
                         {device.name || 'Sede Activa'}
@@ -1344,6 +1405,10 @@ function App() {
                         <span className="lector-detail-value">{schedule.satShiftStart || '08:00'} - {schedule.satShiftEnd || '13:00'}</span>
                       </div>
                       <div className="lector-detail-row">
+                        <span className="lector-detail-label">Domingo:</span>
+                        <span className="lector-detail-value">{schedule.sundayEnabled === false ? 'Sin horario' : `${schedule.sunShiftStart || schedule.shiftStart} - ${schedule.sunShiftEnd || schedule.shiftEnd}`}</span>
+                      </div>
+                      <div className="lector-detail-row">
                         <span className="lector-detail-label">Tolerancia:</span>
                         <span className="lector-detail-value">{schedule.graceMinutes} min</span>
                       </div>
@@ -1353,7 +1418,7 @@ function App() {
                       </div>
                     </div>
                     <div className="lector-actions">
-                      <button className="btn-action btn-action-secondary" onClick={openConfigModal}>Ajustar Turno</button>
+                      <button className="btn-action btn-action-secondary" onClick={() => setSchedulesOpen({ deviceId: activeDeviceId })}><Clock size={14} /> Horarios</button>
                       <button className="btn-action btn-action-primary" onClick={handleSync} disabled={syncing || !activeDeviceId}>
                         <RefreshCw size={14} className={syncing ? 'spin' : ''} />
                         {syncing ? 'Sincronizando...' : 'Sincronizar'}
@@ -1443,7 +1508,7 @@ function App() {
                   </div>
                 </div>
                 <div className="card chart-container-card">
-                  <h3>Incidencias por Empleado</h3>
+                  <h3>Incidencias por Colaborador</h3>
                   <p className="chart-subtitle">Top de colaboradores con más retardos, salidas tempranas o días incompletos.</p>
                   <div style={{ height: 180, marginTop: '12px' }}>
                     <ResponsiveContainer width="100%" height="100%">
@@ -1518,7 +1583,7 @@ function App() {
                        <IconAsistencia size={22} />
                     </div>
                     <h4>Asistencia y Reportes</h4>
-                    <p>Configure filtros de quincenas, turnos, retardos y descargue planillas formateadas en PDF consolidado o por empleado.</p>
+                    <p>Configure filtros de quincenas, turnos, retardos y descargue planillas formateadas en PDF consolidado o por colaborador.</p>
                   </div>
 
                   <div className="card module-card" onClick={() => setActiveTab('eventos')}>
@@ -1583,7 +1648,7 @@ function App() {
                 </div>
 
                 <div className="field">
-                  <label htmlFor="employee">Empleado</label>
+                  <label htmlFor="employee">Colaborador</label>
                   <select
                     id="employee"
                     value={selectedEmployee}
@@ -1616,23 +1681,25 @@ function App() {
                   <CalendarDays size={16} /> Consultar
                 </button>
 
+                <ExportFormat value={reportFormat} onChange={setReportFormat} label="Formato de reportes de asistencia" disabled={downloading} />
                 <button 
                   className="btn-action btn-action-secondary" 
                   onClick={() => downloadReport('consolidated')} 
                   disabled={downloading || loading}
-                  title="Descargar reporte PDF completo (Consolidado)"
+                  title={`Descargar reporte ${reportFormat.toUpperCase()} completo`}
                 >
-                  <FileDown size={16} className={downloading ? 'spin' : ''} /> PDF Completo
+                  <FileDown size={16} className={downloading ? 'spin' : ''} /> {reportFormat.toUpperCase()} Completo
                 </button>
 
                 <button 
                   className="btn-action btn-action-secondary" 
                   onClick={() => downloadReport('individual_files')} 
                   disabled={downloading || loading}
-                  title="Descargar reportes PDF individuales por empleado"
+                  title={reportFormat === 'csv' && selectedEmployee === 'all' ? 'Descargar ZIP con un CSV por colaborador y un resumen general' : 'Descargar reporte por colaborador'}
                 >
-                  <FileDown size={16} className={downloading ? 'spin' : ''} /> PDF por Empleado
+                  <FileDown size={16} className={downloading ? 'spin' : ''} /> {reportFormat.toUpperCase()} por Colaborador{reportFormat === 'csv' && selectedEmployee === 'all' ? ' (ZIP)' : ''}
                 </button>
+                {reportFormat === 'csv' && <button type="button" className="btn-action btn-action-secondary" onClick={() => downloadReport('summary', 'csv')} disabled={downloading || loading}><FileDown size={16} /> CSV Resumen</button>}
               </div>
 
               <div className="table-card">
@@ -1648,6 +1715,7 @@ function App() {
                         <option value="S. Temprana">Salida temprana</option>
                         <option value="Retardo + S.Temp.">Retardo + salida temprana</option>
                         <option value="Incompleto">Incompleto</option>
+                        <option value="Sin horario">Sin horario</option>
                       </select>
                     </div>
                     <div className="attendance-order-control">
@@ -1673,7 +1741,7 @@ function App() {
                       <tr>
                         <th aria-sort={attendanceDescending ? 'descending' : 'ascending'}>Fecha</th>
                         <th>No.</th>
-                        <th>Empleado</th>
+                        <th>Colaborador</th>
                         <th>Entrada</th>
                         <th>Salida</th>
                         <th>Trabajadas</th>
@@ -1688,7 +1756,7 @@ function App() {
                         <tr key={`${row.employeeId}-${row.dateKey}`}>
                           <td>{dateLabel(row.dateKey)}</td>
                           <td>{row.employeeId}</td>
-                          <td>{row.employeeName}</td>
+                          <td>{row.employeeName}<small className="attendance-schedule-detail">{row.scheduleName} · {row.isScheduled === false ? 'Sin horario' : `${row.shiftStart} - ${row.shiftEnd}`}</small></td>
                           <td>{row.firstPunch ? timeLabel(row.firstPunch) : '-'}</td>
                           <td>{row.lastPunch && !row.isIncomplete ? timeLabel(row.lastPunch) : '-'}</td>
                           <td>{durationLabel(row.workedMinutes)}</td>
@@ -1696,7 +1764,7 @@ function App() {
                           <td>{row.isEarlyLeave ? `${row.earlyLeaveMinutes} min` : '-'}</td>
                           <td>{durationLabel(row.overtimeMinutes)}</td>
                           <td>
-                            <span className={`status-pill ${row.isEarlyLeave && row.isLate ? 'early' : row.isLate ? 'late' : row.isEarlyLeave ? 'early' : row.isIncomplete ? 'open' : 'ok'}`}>
+                            <span className={`status-pill ${row.isScheduled === false ? 'early' : row.isEarlyLeave && row.isLate ? 'early' : row.isLate ? 'late' : row.isEarlyLeave ? 'early' : row.isIncomplete ? 'open' : 'ok'}`}>
                               {row.status}
                             </span>
                           </td>
@@ -1720,7 +1788,7 @@ function App() {
                 <h3 style={{ margin: 0 }}>Historial Completo de Eventos</h3>
               </div>
 
-              <div className="filters-panel filters-panel-eventos" style={{ marginBottom: '20px' }}>
+              <div className="filters-panel filters-panel-eventos">
                 <div className="field field-wide">
                   <label htmlFor="employee-search">Buscar Colaborador</label>
                   <div className="input-with-icon">
@@ -1738,17 +1806,28 @@ function App() {
                 <button className="btn-action btn-action-primary" onClick={() => loadEvents()} disabled={loading}>
                   <RefreshCw size={16} className={loading ? 'spin' : ''} /> Actualizar Datos
                 </button>
+                <button type="button" className="btn-action btn-action-secondary" onClick={downloadEventsCsv} disabled={downloading || loading}><FileDown size={16} /> CSV Eventos</button>
+                <button type="button" className="btn-action btn-action-secondary" onClick={() => downloadReport('summary', 'csv')} disabled={downloading || loading}><FileDown size={16} /> CSV Totales</button>
               </div>
 
-              <div className="split-tables-container">
-                <div className="table-card">
-                  <h3>Totales por Empleado</h3>
+              <div className="event-table-tabs" role="tablist" aria-label="Vista de bitacora" onKeyDown={event => {
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                event.preventDefault();
+                const next = event.key === 'Home' ? 'events' : event.key === 'End' ? 'totals' : eventView === 'events' ? 'totals' : 'events';
+                setEventView(next); event.currentTarget.querySelector(`#event-tab-${next}`)?.focus();
+              }}>
+                <button type="button" role="tab" id="event-tab-events" aria-controls="event-panel-events" aria-selected={eventView === 'events'} tabIndex={eventView === 'events' ? 0 : -1} onClick={() => setEventView('events')}><Clock size={16} /> Eventos</button>
+                <button type="button" role="tab" id="event-tab-totals" aria-controls="event-panel-totals" aria-selected={eventView === 'totals'} tabIndex={eventView === 'totals' ? 0 : -1} onClick={() => setEventView('totals')}><Users size={16} /> Totales por colaborador</button>
+              </div>
+              <div className="event-tables">
+                <div className="table-card event-table-panel" role="tabpanel" id="event-panel-totals" aria-labelledby="event-tab-totals" hidden={eventView !== 'totals'}>
+                  <h3>Totales por Colaborador</h3>
                   <div className="table-responsive">
                     <table>
                       <thead>
                         <tr>
                           <th style={{ width: '50px' }}>No.</th>
-                          <th>Empleado</th>
+                          <th>Colaborador</th>
                           <th style={{ width: '70px', textAlign: 'center' }}>Días</th>
                           <th style={{ width: '80px' }}>Horas</th>
                           <th style={{ width: '80px', textAlign: 'center' }}>Retardos</th>
@@ -1894,7 +1973,7 @@ function App() {
                   </div>
                 </div>
 
-                <div className="table-card">
+                <div className="table-card event-table-panel" role="tabpanel" id="event-panel-events" aria-labelledby="event-tab-events" hidden={eventView !== 'events'}>
                   <h3>Bitácora de Eventos</h3>
                   <div className="table-responsive">
                     <table>
@@ -1902,7 +1981,7 @@ function App() {
                         <tr>
                           <th aria-sort="descending">Fecha y hora</th>
                           <th>No.</th>
-                          <th>Empleado</th>
+                          <th>Colaborador</th>
                           <th>Evento</th>
                         </tr>
                       </thead>
@@ -1941,13 +2020,16 @@ function App() {
               <div className="tab-header">
                 <h3 style={{ margin: 0 }}>Directorio de Colaboradores</h3>
                 <div className="colaboradores-header-actions">
-                  {currentUser?.role === 'admin' && <button type="button" className="btn-action btn-action-secondary colaboradores-enroll-btn" onClick={() => setEnrollmentEmployee('')} disabled={!activeDeviceId}><Fingerprint size={16} /> Registrar huella</button>}
+                  <button type="button" className="btn-action btn-action-secondary" onClick={() => setSchedulesOpen({ deviceId: activeDeviceId })} disabled={!activeDeviceId}><Clock size={16} /> Horarios</button>
+                  {currentUser?.role === 'admin' && <button type="button" className="btn-action btn-action-secondary colaboradores-enroll-btn" onClick={() => setBackupsOpen(true)} disabled={!activeDeviceId}><ShieldCheck size={16} /> Respaldos</button>}
+                  <button type="button" className="btn-action btn-action-secondary colaboradores-enroll-btn" onClick={() => setEnrollmentEmployee('')} disabled={!activeDeviceId}><Fingerprint size={16} /> Registrar huella</button>
+                  <ExportFormat value={directoryFormat} onChange={setDirectoryFormat} label="Formato de directorio de colaboradores" disabled={downloading} />
                   <button
-                    className="btn-action btn-action-primary"
-                    onClick={downloadEmployeeList}
-                    disabled={!employees.length}
+                    className="btn-action btn-action-primary directory-download-btn"
+                    onClick={downloadDirectory}
+                    disabled={!employees.length || downloading}
                   >
-                    <FileDown size={16} /> Descargar Lista PDF
+                    <FileDown size={16} /> Descargar Lista {directoryFormat.toUpperCase()}
                   </button>
                 </div>
               </div>
@@ -1987,9 +2069,9 @@ function App() {
                       <tr>
                         <th style={{ width: '80px' }}>ID</th>
                         <th>Nombre Completo</th>
+                        <th>Horario</th>
                         <th style={{ width: '150px' }}>Rol</th>
-                        <th style={{ width: '150px' }}>No. Tarjeta</th>
-                        {currentUser?.role === 'admin' && <th style={{ width: '100px' }}>Acciones</th>}
+                        <th style={{ width: currentUser?.role === 'admin' ? '130px' : '60px' }}>Acciones</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2057,50 +2139,28 @@ function App() {
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                   <span style={{ fontWeight: '600', color: 'var(--text)' }}>{emp.name}</span>
-                                  {currentUser?.role !== 'admin' && <button
-                                    style={{
-                                      color: 'var(--primary)',
-                                      background: 'none',
-                                      border: 'none',
-                                      cursor: 'pointer',
-                                      padding: '2px',
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      opacity: 0.6,
-                                      transition: 'opacity 0.2s'
-                                    }}
-                                    onMouseEnter={(e) => e.currentTarget.style.opacity = 1}
-                                    onMouseLeave={(e) => e.currentTarget.style.opacity = 0.6}
-                                    onClick={() => {
-                                      setEditingEmployeeId(emp.employeeId);
-                                      setEditingEmployeeName(emp.name);
-                                    }}
-                                    title="Editar nombre en plataforma"
-                                  >
-                                    <Edit size={13} />
-                                  </button>}
                                 </div>
                               </div>
                             )}
                           </td>
+                          <td><span className="employee-schedule-label">{resolveReportSchedule(emp, schedule, todayInputValue()).scheduleName}</span></td>
                           <td>
-                            <span className={`status-pill ${emp.role === 14 ? 'late' : 'ok'}`}>
-                                {emp.role === 14 ? 'Administrador' : 'Usuario Normal'}
+                            <span className={`status-pill ${emp.role === 0 ? 'ok' : 'late'}`}>
+                                {emp.role === 14 ? 'Administrador' : emp.role === 0 ? 'Usuario Normal' : 'Usuario protegido'}
                             </span>
                           </td>
-                          <td style={{ color: 'var(--text-soft)', fontFamily: 'monospace', fontSize: '0.88rem' }}>
-                            {emp.cardNo || '-'}
-                          </td>
-                          {currentUser?.role === 'admin' && <td><div className="device-user-row-actions">
-                            <button type="button" title="Editar nombre en el biométrico" aria-label={`Editar nombre del ID ${emp.employeeId} en el biométrico`} onClick={() => setDeviceUserAction({ employee: emp, action: 'rename' })}><Edit size={16} /></button>
-                            <button type="button" title={emp.role !== 0 ? 'Usuario con privilegios protegido' : 'Eliminar usuario y huellas del biométrico'} aria-label={`Eliminar ID ${emp.employeeId} del biométrico`} disabled={emp.role !== 0} className="is-danger" onClick={() => setDeviceUserAction({ employee: emp, action: 'delete' })}><Trash2 size={16} /></button>
-                          </div></td>}
+                          <td><div className="device-user-row-actions">
+                            <button type="button" title="Asignar horario de reportes" aria-label={`Asignar horario al ID ${emp.employeeId}`} onClick={() => setScheduleEmployee(emp)}><Clock size={16} /></button>
+                            {currentUser && <>
+                              <button type="button" title={currentUser.role !== 'admin' && emp.role !== 0 ? 'Usuario con privilegios protegido' : 'Editar nombre en el biométrico'} aria-label={`Editar nombre del ID ${emp.employeeId} en el biométrico`} disabled={currentUser.role !== 'admin' && emp.role !== 0} onClick={() => setDeviceUserAction({ employee: emp, action: 'rename' })}><Edit size={16} /></button>
+                              <button type="button" title={emp.role !== 0 ? 'Usuario con privilegios protegido' : 'Eliminar usuario y huellas del biométrico'} aria-label={`Eliminar ID ${emp.employeeId} del biométrico`} disabled={emp.role !== 0} className="is-danger" onClick={() => setDeviceUserAction({ employee: emp, action: 'delete' })}><Trash2 size={16} /></button>
+                            </>}
+                          </div></td>
                         </tr>
                       ))}
                       {!filteredEmployees.length && (
                         <tr>
-                          <td colSpan={currentUser?.role === 'admin' ? 5 : 4} className="empty-cell">Sin colaboradores registrados en el biométrico activo</td>
+                          <td colSpan={5} className="empty-cell">Sin colaboradores registrados en el biométrico activo</td>
                         </tr>
                       )}
                     </tbody>
@@ -2324,16 +2384,31 @@ function App() {
         </div>
 
         {/* Centered Settings Modal (Two-Column Layout) */}
-        {deviceUserAction && currentUser?.role === 'admin' && devices.some(item => item.id === activeDeviceId) && <DeviceUserAction
+        {schedulesOpen && devices.some(item => item.id === schedulesOpen.deviceId) && <ReportSchedules
+          key={schedulesOpen.deviceId} device={devices.find(item => item.id === schedulesOpen.deviceId)} getJson={getJson} apiRequest={apiRequest}
+          onClose={() => setSchedulesOpen(null)} onSaved={async () => {
+            await loadDevices();
+            if (schedulesOpen.deviceId === activeDeviceId) await loadEvents(currentView.current.range, activeDeviceId);
+          }}
+        />}
+        {scheduleEmployee && devices.some(item => item.id === activeDeviceId) && <AssignReportSchedule
+          key={`${activeDeviceId}:${scheduleEmployee.employeeId}`} device={devices.find(item => item.id === activeDeviceId)} employee={scheduleEmployee}
+          getJson={getJson} apiRequest={apiRequest} onClose={() => setScheduleEmployee(null)} onSaved={() => loadEvents(currentView.current.range, activeDeviceId)}
+        />}
+        {backupsOpen && currentUser?.role === 'admin' && devices.some(item => item.id === activeDeviceId) && <BiometricBackups
+          key={activeDeviceId} device={devices.find(item => item.id === activeDeviceId)} getJson={getJson} apiRequest={apiRequest}
+          onClose={() => setBackupsOpen(false)} onSaved={() => loadEvents(currentView.current.range, activeDeviceId)}
+        />}
+        {deviceUserAction && currentUser && (currentUser.role === 'admin' || deviceUserAction.employee.role === 0) && devices.some(item => item.id === activeDeviceId) && <DeviceUserAction
           key={`${activeDeviceId}:${deviceUserAction.employee.employeeId}:${deviceUserAction.action}`}
           device={devices.find(item => item.id === activeDeviceId)} employee={deviceUserAction.employee} action={deviceUserAction.action}
           getJson={getJson} apiRequest={apiRequest} onClose={() => setDeviceUserAction(null)} onSaved={() => loadEvents(currentView.current.range, activeDeviceId)}
         />}
-        {enrollmentEmployee !== null && currentUser?.role === 'admin' && devices.some(item => item.id === activeDeviceId) && (
+        {enrollmentEmployee !== null && currentUser && devices.some(item => item.id === activeDeviceId) && (
           <FingerprintEnrollment
             key={activeDeviceId}
             device={devices.find(item => item.id === activeDeviceId)}
-            employees={employees.filter(employee => employee.devicePresent !== false)}
+            employees={employees.filter(employee => employee.devicePresent !== false && (currentUser.role === 'admin' || employee.role === 0))}
             initialEmployeeId={enrollmentEmployee}
             getJson={getJson}
             apiRequest={apiRequest}
@@ -2427,7 +2502,7 @@ function App() {
                   
                   <div className="form-pane-scroll">
                     {/* Schedule Settings Section */}
-                    <div className="form-card-section">
+                    {selectedEditDeviceId === 'new' ? <div className="form-card-section">
                       <div className="card-section-title">Horarios de Jornada</div>
                       
                       <div className="schedule-grid">
@@ -2493,7 +2568,12 @@ function App() {
                           </div>
                         </div>
                       </div>
-                    </div>
+                    </div> : <div className="form-card-section">
+                      <div className="card-section-title">Horarios de reportes</div>
+                      <button type="button" className="btn-action btn-action-secondary" onClick={() => {
+                        setIsConfigOpen(false); setSchedulesOpen({ deviceId: selectedEditDeviceId });
+                      }}><Clock size={16} /> Gestionar horarios</button>
+                    </div>}
 
                     {/* General Settings Section (SOLO ADMIN) */}
                     {currentUser?.role === 'admin' && (
@@ -2579,14 +2659,14 @@ function App() {
                 <button className="btn-action btn-action-secondary" style={{ width: 'auto' }} onClick={() => setIsConfigOpen(false)}>
                   Cancelar
                 </button>
-                <button 
+                {currentUser?.role === 'admin' && <button
                   className="btn-action btn-action-primary" 
                   style={{ width: 'auto' }}
                   onClick={handleSaveConfig}
                   disabled={savingConfig || !editIp || !editName}
                 >
                   {savingConfig ? 'Guardando...' : 'Guardar Cambios'}
-                </button>
+                </button>}
               </div>
             </div>
           </div>
@@ -2662,6 +2742,7 @@ function App() {
 }
 
 async function apiRequest(url, options = {}) {
+  const { responseType, ...requestOptions } = options;
   const token = window.localStorage.getItem('zkteco-token');
   const headers = {
     'Content-Type': 'application/json',
@@ -2672,7 +2753,7 @@ async function apiRequest(url, options = {}) {
   }
 
   const response = await fetch(url, {
-    ...options,
+    ...requestOptions,
     headers,
   });
 
@@ -2683,11 +2764,17 @@ async function apiRequest(url, options = {}) {
     throw new Error('Sesión expirada. Inicie sesión nuevamente.');
   }
 
+  if (response.ok && responseType === 'blob') {
+    const filename = /filename="([a-zA-Z0-9_.-]+)"/.exec(response.headers.get('Content-Disposition') || '')?.[1] || 'asisto-respaldo.zkbio';
+    return { blob: await response.blob(), filename, verified: response.headers.get('X-Backup-Verified') === '1' };
+  }
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     const error = new Error(payload.message || 'No se pudo completar la solicitud.');
     error.device = payload.device;
+    error.needsAttention = payload.needsAttention;
+    error.code = payload.code;
     throw error;
   }
 
@@ -2698,34 +2785,20 @@ async function getJson(url) {
   return apiRequest(url);
 }
 
+function saveExport(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
 function drawAsistoPdfBrand(doc, x, y) {
-  // Ícono cuadrado redondeado Grafito (#1B1F24)
-  doc.setFillColor(27, 31, 36);
-  doc.roundedRect(x, y, 28, 28, 6, 6, 'F');
-  // Letra A blanca + barra Naranja ITZ (#FF7A00)
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
-  doc.setTextColor(255, 255, 255);
-  doc.text('A', x + 7.5, y + 20.5);
-  doc.setFillColor(255, 122, 0);
-  doc.rect(x + 11, y + 14.5, 6.5, 2.5, 'F');
-
-  // Wordmark ASISTO By ITZ | OIL & GAS
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(15);
-  doc.setTextColor(27, 31, 36);
-  doc.text('ASISTO', x + 34, y + 16);
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(6.5);
-  doc.setTextColor(255, 122, 0);
-  doc.text('By ITZ', x + 34, y + 25);
-  doc.setTextColor(107, 114, 128);
-  doc.text('| OIL & GAS', x + 57, y + 25);
-
-  // Línea divisoria vertical después del logo
+  const width = 110;
+  const image = doc.getImageProperties(asistoPdfLogo);
+  doc.addImage(asistoPdfLogo, 'PNG', x, y + 2, width, width * image.height / image.width, 'asisto-logo', 'FAST');
   doc.setDrawColor(229, 231, 235);
-  doc.line(x + 114, y + 2, x + 114, y + 26);
+  doc.line(x + 114, y + 2, x + 114, y + 30);
 }
 
 function drawSummaryPage(doc, { totals, range, device }) {
@@ -2865,7 +2938,7 @@ function drawSummaryPage(doc, { totals, range, device }) {
   doc.setTextColor(107, 114, 128);
   doc.text('Elaborado por (Recursos Humanos)', 180, signatureY + 47, { align: 'center' });
   doc.text('Autorizado por (Gerencia / Nómina)', 612, signatureY + 47, { align: 'center' });
-  doc.text('ASISTO By ITZ | OIL & GAS — Reporte consolidado del periodo para procesamiento administrativo.', 396, signatureY + 65, { align: 'center' });
+  doc.text('ASISTO | Reporte consolidado del periodo para procesamiento administrativo.', 396, signatureY + 65, { align: 'center' });
 }
 
 function drawEmployeePage(doc, { employeeId, employeeName, empRows, empTotal, range, schedule, device }) {
@@ -2900,44 +2973,19 @@ function drawEmployeePage(doc, { employeeId, employeeName, empRows, empTotal, ra
   doc.setDrawColor(229, 231, 235);
   doc.line(40, 60, 752, 60);
 
-  // 1. Period & Device Configuration Metadata Card (from x=40 to x=250, width 220)
-  const metaX = 40;
-  const metaY = 70;
-  const metaWidth = 220;
-  const metaHeight = 52;
-
-  doc.setFillColor(248, 249, 250);
-  doc.roundedRect(metaX, metaY, metaWidth, metaHeight, 4, 4, 'F');
-  doc.setDrawColor(229, 231, 235);
-  doc.roundedRect(metaX, metaY, metaWidth, metaHeight, 4, 4, 'S');
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.setTextColor(27, 31, 36);
-  doc.text('CONFIGURACIÓN DEL PERIODO', metaX + 10, metaY + 12);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
-  doc.setTextColor(107, 114, 128);
-  doc.text(`Biométrico IP: ${device.ip}:${device.port}`, metaX + 10, metaY + 23);
-  doc.text(`Horario L-V: ${schedule.shiftStart} - ${schedule.shiftEnd}`, metaX + 10, metaY + 32);
-  doc.text(`Horario Sáb: ${schedule.satShiftStart || '08:00'} - ${schedule.satShiftEnd || '13:00'}`, metaX + 10, metaY + 41);
-  doc.text(`Tolerancia entrada: ${schedule.graceMinutes} min`, metaX + 120, metaY + 23);
-
-  // 2. Employee KPIs Row (4 cards from x=276 to x=752, each width 110, gap 11)
-  const cardWidth = 110;
+  const cardWidth = 166;
   const cardHeight = 52;
   const cardY = 70;
-  const cardGap = 11;
+  const cardGap = 16;
   const employeeCards = [
     { label: 'DÍAS LABORADOS', value: `${empTotal.days} días`, color: [16, 185, 129] },
     { label: 'HORAS TRABAJADAS', value: durationLabel(empTotal.workedMinutes), color: [27, 31, 36] },
-    { label: 'INCIDENCIAS', value: `${empTotal.lateCount} (${empTotal.lateMinutes} min)`, color: [255, 122, 0] },
+    { label: 'RETARDOS', value: `${empTotal.lateCount} (${empTotal.lateMinutes} min)`, color: [255, 122, 0] },
     { label: 'HORAS EXTRA', value: durationLabel(empTotal.overtimeMinutes), color: [107, 114, 128] },
   ];
 
   employeeCards.forEach((card, index) => {
-    const cardX = 276 + index * (cardWidth + cardGap);
+    const cardX = 40 + index * (cardWidth + cardGap);
     
     // Draw background rounded rect
     doc.setFillColor(248, 249, 250);
@@ -2962,12 +3010,14 @@ function drawEmployeePage(doc, { employeeId, employeeName, empRows, empTotal, ra
 
   // Table headers & mapping
   const tableHeaders = [
-    'Fecha', 'Entrada', 'Salida', 'Tiempo Trab.', 'Retardo',
+    'Fecha', 'Horario', 'Tol. entrada', 'Entrada', 'Salida', 'Tiempo Trab.', 'Retardo',
     'Min. Tarde', 'S. Temp.', 'Min. S. Temp.', 'H. Extra', 'Estado'
   ];
 
   const tableBody = empRows.map((row) => [
     dateLabel(row.dateKey),
+    `${row.scheduleName || 'Horario general'}\n${row.isScheduled === false ? 'Sin horario' : `${row.shiftStart} - ${row.shiftEnd}`}`,
+    row.isScheduled === false ? '-' : `${row.graceMinutes} min`,
     row.firstPunch ? timeLabel(row.firstPunch) : '-',
     row.lastPunch && !row.isIncomplete ? timeLabel(row.lastPunch) : '-',
     durationLabel(row.workedMinutes),
@@ -2983,12 +3033,13 @@ function drawEmployeePage(doc, { employeeId, employeeName, empRows, empTotal, ra
     startY: 132,
     head: [tableHeaders],
     body: tableBody,
-    styles: { font: 'helvetica', fontSize: 7.5, cellPadding: 4, textColor: [27, 31, 36] },
+    styles: { font: 'helvetica', fontSize: 7, cellPadding: 3, textColor: [27, 31, 36] },
+    columnStyles: { 0: { cellWidth: 48 }, 1: { cellWidth: 100 }, 2: { cellWidth: 39 } },
     headStyles: { fillColor: [27, 31, 36], textColor: 255 },
     alternateRowStyles: { fillColor: [248, 249, 250] },
     margin: { left: 40, right: 40 },
     didParseCell: function(data) {
-      if (data.section === 'body' && data.column.index === 9) { // index 9 is 'Estado'
+      if (data.section === 'body' && data.column.index === 11) {
         const status = data.cell.raw;
         if (status === 'Retardo') {
           data.cell.styles.textColor = [255, 122, 0];
@@ -3027,7 +3078,7 @@ function drawEmployeePage(doc, { employeeId, employeeName, empRows, empTotal, ra
   doc.setTextColor(107, 114, 128);
   doc.text('Firma del Colaborador', 180, signatureY + 47, { align: 'center' });
   doc.text('Recursos Humanos / Autorización', 612, signatureY + 47, { align: 'center' });
-  doc.text('ASISTO By ITZ | OIL & GAS — Registro oficial de asistencia y tiempos laborados para efectos de nómina.', 396, signatureY + 65, { align: 'center' });
+  doc.text('ASISTO | Registro de asistencia y tiempos laborados para efectos de nomina.', 396, signatureY + 65, { align: 'center' });
 }
 
 function createPdf({ rows, totals, range, schedule, device, selectedEmployee, mode }) {

@@ -42,7 +42,7 @@ function normalizeStoredEvent(deviceId, event, source) {
   return {
     deviceId: String(deviceId),
     employeeId,
-    employeeName: cleanValue(event.employeeName) || `Empleado ${employeeId}`,
+    employeeName: cleanValue(event.employeeName) || `Colaborador ${employeeId}`,
     deviceUserId: cleanValue(event.deviceUserId || event.userId || employeeId),
     uid: cleanValue(event.uid || event.userSn),
     timestamp: timestamp.toISOString(),

@@ -24,7 +24,8 @@ function fixture(settings = {}) {
     payload.writeUInt32LE(settings.noCounterChange ? before.templates.size : after.templates.size, 24);
     return { code: C.CMD_ACK_OK, payload };
   } };
-  const options = { read: async () => { reads++; if (settings.verificationFails && reads > 1) throw new Error('offline'); return reads === 1 ? before : after; },
+  const options = { allowPrivilegedUsers: settings.allowPrivilegedUsers === true, authorize: settings.authorize,
+    read: async () => { reads++; if (settings.verificationFails && reads > 1) throw new Error('offline'); return reads === 1 ? before : after; },
     open: () => channel, now: () => time, duration: 4000,
     sleep: async () => { time += 2000; if (settings.cancel) { controller.abort(); controller.signal.throwIfAborted(); } } };
   const run = () => captureFingerprint({}, input, { signal: controller.signal, report: value => reports.push(value) }, options);
@@ -254,4 +255,64 @@ test('queued new users ignore browser-supplied IDs and audit the ID assigned dur
   await settled();
   assert.equal(manager.job(job.id, 'a').employeeId, '611');
   assert.equal(manager.job(job.id, 'a').status, 'completed');
+});
+
+test('operators cannot enroll privileged or unknown-role users, even without a prior inspection', async () => {
+  for (const role of [14, 6, 2, undefined]) {
+    const value = fixture({ before: snapshot({ users: [{ ...existing, role }] }) });
+    await assert.rejects(value.run(), error => error.statusCode === 403);
+    assert.equal(value.commands.length, 0);
+  }
+});
+
+test('administrators retain enrollment access to privileged users without changing their role', async () => {
+  const user = { ...existing, role: 14 };
+  const value = fixture({ allowPrivilegedUsers: true, before: snapshot({ users: [user] }),
+    after: snapshot({ users: [user], templates: new Map([['6:4', 'thumb'], ['6:3', 'index']]) }) });
+  assert.equal((await value.run()).status, 'completed');
+  assert.ok(value.commands.includes(C.CMD_STARTENROLL));
+});
+
+test('revoked authorization prevents capture commands and cannot be forged through enrollment input', async () => {
+  const value = fixture({ authorize() { throw Object.assign(new Error('Revoked access'), { statusCode: 403 }); } });
+  await assert.rejects(value.run(), /Revoked access/);
+  assert.equal(value.commands.length, 0);
+  const validated = validateEnrollment({ ...input, role: 14, allowPrivilegedUsers: true, actorId: 'admin' });
+  assert.equal(validated.role, undefined);
+  assert.equal(validated.allowPrivilegedUsers, undefined);
+  assert.equal(validated.actorId, undefined);
+});
+
+test('operator job history and cancellation are owner-scoped; administrators can explicitly supervise all jobs', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const { devices, manager } = managerFixture(async (_device, _request, control) => {
+    await gate;
+    return { status: control.signal.aborted ? 'cancelled' : 'completed', message: 'Verified' };
+  });
+  const first = manager.start(devices[0], 'operator-a', input);
+  await settled();
+  try {
+    assert.equal(manager.latest('a', 'operator-b'), null);
+    assert.equal(manager.latest('a', 'operator-a').id, first.id);
+    assert.throws(() => manager.job(first.id, 'a', 'operator-b'), error => error.statusCode === 404);
+    assert.throws(() => manager.cancel(first.id, 'a', 'operator-b'), error => error.statusCode === 404);
+    assert.equal(manager.job(first.id, 'a').cancelRequested, false);
+    assert.equal(manager.cancel(first.id, 'a', 'admin', { canManageAll: true }).cancelRequested, true);
+  } finally { release(); await settled(); }
+  assert.equal(manager.job(first.id, 'a').status, 'cancelled');
+});
+
+test('assignment revocation while queued prevents capture and is recorded as a failed job', async () => {
+  let allowed = true, captures = 0;
+  const { devices, manager } = managerFixture(async () => { captures++; }, {
+    authorizeActor: () => allowed ? { allowPrivilegedUsers: false } : null,
+  });
+  const job = manager.start(devices[0], 'operator', input);
+  allowed = false;
+  await settled();
+  assert.equal(captures, 0);
+  assert.equal(manager.job(job.id, 'a').status, 'failed');
+  assert.match(manager.job(job.id, 'a').message, /no tiene permiso/);
+  assert.throws(() => manager.start(devices[0], 'operator', input), error => error.statusCode === 403);
 });

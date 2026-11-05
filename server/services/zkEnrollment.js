@@ -4,6 +4,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { COMMANDS: C, REQUEST_DATA } = require('zklib-js/constants');
 const { createTCPHeader, decodeUserData72 } = require('zklib-js/utils');
 const { readTcpPreparedData, validateRecordBuffer } = require('./zkTcpDownload');
+const { indexFingerprintRecords } = require('./zkFingerprintRecords');
 
 function enrollmentError(message, statusCode = 409) {
   return Object.assign(new Error(message), { statusCode, publicMessage: message });
@@ -19,6 +20,12 @@ function validateEnrollment(input) {
   }
   return { employeeId: createEmployee ? '' : String(input.employeeId), fingerIndex: input.fingerIndex,
     createEmployee, name: createEmployee ? input.name.trim() : '' };
+}
+
+function assertEnrollmentTarget(user, allowPrivilegedUsers = false) {
+  if (user && user.role !== 0 && !allowPrivilegedUsers) {
+    throw enrollmentError('Solo un administrador de ASISTO puede registrar huellas de usuarios con privilegios en el biometrico.', 403);
+  }
 }
 
 function nextEmployeeId(users, reservedIds = []) {
@@ -54,7 +61,7 @@ async function readEnrollmentUsers(device) {
     }
     usersHash = crypto.createHash('sha256').update(userData).digest('hex');
   } finally { userData.fill(0); }
-  assert.equal(users.length, userCount, 'Listado de empleados incompleto.');
+  assert.equal(users.length, userCount, 'Listado de colaboradores incompleto.');
   await tcp.freeData();
   return { users, usersHash, userHashes, fingerCount };
 }
@@ -67,20 +74,12 @@ async function readEnrollmentSnapshot(device) {
   request.writeUInt16LE(7, 1);
   request.writeUInt32LE(2, 3);
   const data = await readTcpPreparedData(tcp, request);
-  const templates = new Map();
+  let templates;
   try {
-    assert.ok(data.length === 0 || (data.length >= 4 && data.readUInt32LE(0) === data.length - 4), 'Historial de huellas incompleto.');
-    for (let offset = 4; offset < data.length;) {
-      assert.ok(offset + 6 <= data.length, 'Cabecera de huella incompleta.');
-      const size = data.readUInt16LE(offset);
-      assert.ok(size >= 6 && offset + size <= data.length, 'Huella incompleta.');
-      const key = `${data.readUInt16LE(offset + 2)}:${data[offset + 4]}`;
-      assert.ok(!templates.has(key), 'Posicion de huella duplicada.');
-      templates.set(key, crypto.createHash('sha256').update(data.subarray(offset, offset + size)).digest('hex'));
-      offset += size;
-    }
+    const index = indexFingerprintRecords(data, new Set(snapshot.users.map(user => user.uid)));
+    templates = index.templates;
+    assert.equal(index.recordCount, snapshot.fingerCount, 'Listado de huellas incompleto.');
   } finally { data.fill(0); }
-  assert.equal(templates.size, snapshot.fingerCount, 'Listado de huellas incompleto.');
   await tcp.freeData();
   // Only transient hashes stay in RAM for integrity checks; never return them to clients.
   return { ...snapshot, templates };
@@ -155,32 +154,39 @@ async function captureFingerprint(device, input, control, options = {}) {
   control.signal.throwIfAborted();
   let employeeId = input.employeeId;
   let user = initial.users.find(item => item.employeeId === employeeId);
+  const authorize = () => {
+    const current = options.authorize?.();
+    assertEnrollmentTarget(user, options.allowPrivilegedUsers === true && (!current || current.allowPrivilegedUsers === true));
+  };
+  authorize();
   if (input.createEmployee) {
     employeeId = nextEmployeeId(initial.users, options.reservedEmployeeIds?.() || []);
-    report({ employeeId, message: `Creando empleado con ID automatico ${employeeId}.` });
+    report({ employeeId, message: `Creando colaborador con ID automatico ${employeeId}.` });
     const uid = Math.max(0, ...initial.users.map(item => item.uid)) + 1;
-    if (uid > 3000) throw enrollmentError('No hay un UID libre compatible para crear el empleado.');
+    if (uid > 3000) throw enrollmentError('No hay un UID libre compatible para crear el colaborador.');
     const payload = Buffer.alloc(72);
     payload.writeUInt16LE(uid, 0);
     payload.write(input.name, 11, 24, 'utf8');
     payload.write(employeeId, 48, 24, 'ascii');
+    authorize();
     const reply = await device.zklibTcp.executeCmd(C.CMD_USER_WRQ, payload);
-    if (reply.readUInt16LE(0) !== C.CMD_ACK_OK) throw enrollmentError('El reloj rechazo la creacion del empleado.');
+    if (reply.readUInt16LE(0) !== C.CMD_ACK_OK) throw enrollmentError('El reloj rechazo la creacion del colaborador.');
     createdEmployee = true;
     report({ employeeCreated: true });
     const fresh = await read(device);
     user = fresh.users.find(item => item.employeeId === employeeId);
-    if (!user || user.uid !== uid || user.name !== input.name || user.role !== 0) throw enrollmentError('No se pudo verificar el empleado creado.');
+    if (!user || user.uid !== uid || user.name !== input.name || user.role !== 0) throw enrollmentError('No se pudo verificar el colaborador creado.');
     if (fresh.users.length !== initial.users.length + 1 || [...initial.userHashes].some(([uid, hash]) => fresh.userHashes.get(uid) !== hash)) {
-      throw enrollmentError('Se detectaron cambios inesperados en los empleados.');
+      throw enrollmentError('Se detectaron cambios inesperados en los colaboradores.');
     }
     if (fresh.templates.size !== initial.templates.size || [...initial.templates].some(([key, hash]) => fresh.templates.get(key) !== hash)) {
       throw enrollmentError('Se detectaron cambios inesperados en las huellas existentes.');
     }
     initial = fresh;
   } else if (!user) {
-    throw enrollmentError('El empleado no existe en este reloj. Sincronice o seleccione Nuevo empleado.', 404);
+    throw enrollmentError('El colaborador no existe en este reloj. Sincronice o seleccione Nuevo colaborador.', 404);
   }
+  authorize();
   if (options.saveEmployees) options.saveEmployees(initial.users);
   control.signal.throwIfAborted();
   const key = `${user.uid}:${input.fingerIndex}`;
@@ -190,6 +196,7 @@ async function captureFingerprint(device, input, control, options = {}) {
   let restored = true;
   let failure;
   try {
+    authorize();
     if ((await channel.send(C.CMD_CANCELCAPTURE)).code !== C.CMD_ACK_OK) throw enrollmentError('No se pudo preparar la captura.');
     control.signal.throwIfAborted();
     const payload = Buffer.alloc(26);
@@ -203,8 +210,9 @@ async function captureFingerprint(device, input, control, options = {}) {
     while (now() < deadline) {
       await sleep(2000, undefined, { signal: control.signal });
       control.signal.throwIfAborted();
+      authorize();
       const info = await channel.send(C.CMD_GET_FREE_SIZES);
-      if (info.code === C.CMD_ACK_OK && info.payload.length >= 28 && info.payload.readUInt32LE(24) > initial.templates.size) break;
+      if (info.code === C.CMD_ACK_OK && info.payload.length >= 28 && info.payload.readUInt32LE(24) > (initial.fingerCount ?? initial.templates.size)) break;
     }
   } catch (error) { failure = error; }
   finally {
@@ -235,4 +243,4 @@ async function captureFingerprint(device, input, control, options = {}) {
   return { status: 'timeout', message: 'Tiempo agotado. No se encontro una huella nueva guardada.', employeeCreated: createdEmployee, normalModeRestored: true };
 }
 
-module.exports = { enrollmentError, validateEnrollment, nextEmployeeId, readEnrollmentUsers, readEnrollmentSnapshot, commandChannel, captureFingerprint };
+module.exports = { enrollmentError, validateEnrollment, assertEnrollmentTarget, nextEmployeeId, readEnrollmentUsers, readEnrollmentSnapshot, commandChannel, captureFingerprint };

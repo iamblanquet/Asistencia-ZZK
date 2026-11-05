@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const {
   getDeviceConfig,
   readDeviceDiagnostics,
@@ -18,10 +19,14 @@ const {
 } = require('./services/db');
 const { addStoredEvents, parseAttendanceFile } = require('./services/eventStore');
 const { getSavedAttendance } = require('./services/attendanceStore');
+const { listScheduleGroups, saveScheduleGroup, getGeneralSchedule, saveGeneralSchedule,
+  getEmployeeSchedule, assignEmployeeSchedule } = require('./services/reportSchedules');
 const { syncAttendance } = require('./services/syncAttendance');
-const { db } = require('./services/sqlite');
+const { db, dataDir } = require('./services/sqlite');
 const { createEnrollmentManager } = require('./services/enrollment');
 const { createDeviceUserManager } = require('./services/deviceUsers');
+const { createBiometricBackupManager } = require('./services/biometricBackups');
+const { createAutomaticArchive } = require('./services/biometricAutomaticArchive');
 const { getRealtimeStatus, startRealtime, stopRealtime } = require('./services/realtime');
 const {
   authenticate,
@@ -34,16 +39,25 @@ const {
 } = require('./services/auth');
 
 const app = express();
-let deviceUsers;
+function authorizeDeviceActor(deviceId, actorId) {
+  const actor = getUsers().find(user => user.id === actorId);
+  if (!actor || (actor.role !== 'admin' && !(actor.assignedDevices || []).includes(deviceId))) return null;
+  return { allowPrivilegedUsers: actor.role === 'admin' };
+}
+let deviceUsers, biometricBackups;
 const enrollments = createEnrollmentManager({ db, withDevice, getDeviceById, getRealtimeStatus, saveEmployees,
-  isDeviceBusy: deviceId => deviceUsers?.isBusy(deviceId),
+  isDeviceBusy: deviceId => deviceUsers?.isBusy(deviceId) || biometricBackups?.isBusy(deviceId),
+  authorizeActor: authorizeDeviceActor,
   reservedEmployeeIds: deviceId => getEmployees(deviceId).map(employee => employee.employeeId) });
 deviceUsers = createDeviceUserManager({ db, withDevice, getDeviceById, getRealtimeStatus, saveEmployees,
-  isEnrollmentBusy: deviceId => enrollments.isBusy(deviceId) });
+  authorizeActor: authorizeDeviceActor,
+  isEnrollmentBusy: deviceId => enrollments.isBusy(deviceId) || biometricBackups?.isBusy(deviceId) });
+biometricBackups = createBiometricBackupManager({ db, withDevice, getDeviceById, getRealtimeStatus, saveEmployees,
+  archiveService: createAutomaticArchive({ directory: path.join(dataDir, 'biometric-keys') }),
+  isDeviceBusy: deviceId => enrollments.isBusy(deviceId) || deviceUsers.isBusy(deviceId) });
 const port = Number(process.env.API_PORT || 5174);
 
 app.use(cors({ origin: true }));
-app.use(express.json({ limit: '10mb' }));
 
 app.use((req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
@@ -82,6 +96,8 @@ function authMiddleware(req, res, next) {
 }
 
 app.use(authMiddleware);
+app.use('/api/device/biometric-backups', requireAdmin, express.json({ limit: '24mb' }));
+app.use(express.json({ limit: '10mb' }));
 
 // Admin Role Check Middleware
 function requireAdmin(req, res, next) {
@@ -114,12 +130,48 @@ function enrollmentDevice(req, res) {
   return device;
 }
 
-app.get('/api/device/fingerprints', requireAdmin, async (req, res, next) => {
+app.get('/api/device/biometric-backups/history', requireAdmin, (req, res) => {
+  const device = enrollmentDevice(req, res);
+  if (device) res.json({ actions: biometricBackups.history(device.id) });
+});
+app.get('/api/device/biometric-backups/recovery-key', requireAdmin, async (req, res, next) => {
   const device = enrollmentDevice(req, res);
   if (!device) return;
-  try { res.json(await enrollments.inspect(device, req.query.employeeId)); } catch (error) { next(error); }
+  try {
+    const result = await biometricBackups.recoveryKey(device, req.user.id);
+    res.set({ 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${result.filename}"`, 'X-Content-Type-Options': 'nosniff' });
+    res.send(result.buffer);
+  } catch (error) { next(error); }
 });
-app.get('/api/device/users/:id', requireAdmin, async (req, res, next) => {
+app.post('/api/device/biometric-backups/download', requireAdmin, async (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try {
+    const result = await biometricBackups.download(device, req.user.id, req.body);
+    res.set({ 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${result.filename}"`,
+      'X-Content-Type-Options': 'nosniff', 'X-Backup-Audit-Id': result.auditId, 'X-Backup-Verified': result.verified ? '1' : '0' });
+    res.send(result.buffer);
+  } catch (error) { next(error); }
+});
+for (const action of ['preview', 'restore']) app.post(`/api/device/biometric-backups/${action}`, requireAdmin, async (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try { res.json(await biometricBackups[action](device, req.user.id, req.body)); }
+  catch (error) { next(error); }
+});
+app.use('/api/device/biometric-backups', (error, req, res, next) => {
+  if (res.headersSent) return next(error);
+  res.status(error.statusCode || error.status || 503).json({ ok: false, needsAttention: Boolean(error.needsAttention),
+    ...(error.code && { code: error.code }),
+    message: error.publicMessage || 'No se pudo completar la operacion de respaldo. Revise el archivo y el estado del reloj.' });
+});
+
+app.get('/api/device/fingerprints', async (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try { res.json(await enrollments.inspect(device, req.query.employeeId, req.user.id)); } catch (error) { next(error); }
+});
+app.get('/api/device/users/:id', async (req, res, next) => {
   const device = enrollmentDevice(req, res);
   if (!device) return;
   try { res.json(await deviceUsers.preview(device, req.user.id, req.params.id)); } catch (error) { next(error); }
@@ -135,32 +187,32 @@ function deviceUserAction(action) {
     }
   };
 }
-app.put('/api/device/users/:id', requireAdmin, deviceUserAction('rename'));
-app.delete('/api/device/users/:id', requireAdmin, deviceUserAction('delete'));
-app.get('/api/device/enrollment-next-id', requireAdmin, async (req, res, next) => {
+app.put('/api/device/users/:id', deviceUserAction('rename'));
+app.delete('/api/device/users/:id', deviceUserAction('delete'));
+app.get('/api/device/enrollment-next-id', async (req, res, next) => {
   const device = enrollmentDevice(req, res);
   if (!device) return;
-  try { res.json(await enrollments.nextEmployee(device)); } catch (error) { next(error); }
+  try { res.json(await enrollments.nextEmployee(device, req.user.id)); } catch (error) { next(error); }
 });
-app.get('/api/device/enrollments', requireAdmin, (req, res, next) => {
+app.get('/api/device/enrollments', (req, res, next) => {
   const device = enrollmentDevice(req, res);
   if (!device) return;
-  try { res.json({ job: enrollments.latest(device.id) }); } catch (error) { next(error); }
+  try { res.json({ job: enrollments.latest(device.id, req.user.role === 'admin' ? null : req.user.id) }); } catch (error) { next(error); }
 });
-app.post('/api/device/enrollments', requireAdmin, (req, res, next) => {
+app.post('/api/device/enrollments', (req, res, next) => {
   const device = enrollmentDevice(req, res);
   if (!device) return;
   try { res.status(202).json({ job: enrollments.start(device, req.user.id, req.body) }); } catch (error) { next(error); }
 });
-app.get('/api/device/enrollments/:id', requireAdmin, (req, res, next) => {
+app.get('/api/device/enrollments/:id', (req, res, next) => {
   const device = enrollmentDevice(req, res);
   if (!device) return;
-  try { res.json({ job: enrollments.job(req.params.id, device.id) }); } catch (error) { next(error); }
+  try { res.json({ job: enrollments.job(req.params.id, device.id, req.user.role === 'admin' ? null : req.user.id) }); } catch (error) { next(error); }
 });
-app.post('/api/device/enrollments/:id/cancel', requireAdmin, (req, res, next) => {
+app.post('/api/device/enrollments/:id/cancel', (req, res, next) => {
   const device = enrollmentDevice(req, res);
   if (!device) return;
-  try { res.json({ job: enrollments.cancel(req.params.id, device.id, req.user.id) }); } catch (error) { next(error); }
+  try { res.json({ job: enrollments.cancel(req.params.id, device.id, req.user.id, { canManageAll: req.user.role === 'admin' }) }); } catch (error) { next(error); }
 });
 
 app.get('/api/health', (_req, res) => {
@@ -278,6 +330,9 @@ app.put('/api/devices/:id', (req, res) => {
       shiftEnd: req.body.shiftEnd,
       satShiftStart: req.body.satShiftStart,
       satShiftEnd: req.body.satShiftEnd,
+      sundayEnabled: req.body.sundayEnabled,
+      sunShiftStart: req.body.sunShiftStart,
+      sunShiftEnd: req.body.sunShiftEnd,
       graceMinutes: req.body.graceMinutes
     };
   }
@@ -345,7 +400,7 @@ app.get('/api/device/realtime/status', (req, res) => {
 });
 
 app.post('/api/device/realtime/start', async (req, res) => {
-  if (enrollments.isBusy(req.query.deviceId) || deviceUsers.isBusy(req.query.deviceId)) return res.status(409).json({ message: 'Espere a que termine la operacion en el biometrico.' });
+  if (enrollments.isBusy(req.query.deviceId) || deviceUsers.isBusy(req.query.deviceId) || biometricBackups.isBusy(req.query.deviceId)) return res.status(409).json({ message: 'Espere a que termine la operacion en el biometrico.' });
   const device = getRequestDevice(req);
   if (!device) {
     return res.status(404).json({ ok: false, message: 'Dispositivo no encontrado o acceso denegado.' });
@@ -379,6 +434,47 @@ app.post('/api/events/import', (req, res) => {
   });
 });
 
+app.get('/api/device/report-schedules', (req, res) => {
+  const device = enrollmentDevice(req, res);
+  if (device) res.json({ groups: listScheduleGroups(device.id), employees: getEmployees(device.id), device,
+    generalReportSchedule: getGeneralSchedule(device.id) });
+});
+app.put('/api/device/report-schedules/general', (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try {
+    const generalReportSchedule = saveGeneralSchedule(device.id, req.body || {}, req.user.id);
+    res.json({ generalReportSchedule, groups: listScheduleGroups(device.id), employees: getEmployees(device.id) });
+  } catch (error) { next(error); }
+});
+app.get('/api/employees/:id/report-schedule', (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try {
+    const assignment = getEmployeeSchedule(device.id, req.params.id);
+    res.json({ assignment, employee: getEmployees(device.id).find(value => value.employeeId === req.params.id),
+      groups: listScheduleGroups(device.id), generalReportSchedule: getGeneralSchedule(device.id), device });
+  } catch (error) { next(error); }
+});
+app.put('/api/employees/:id/report-schedule', (req, res, next) => {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try {
+    res.json({ assignment: assignEmployeeSchedule(device.id, req.params.id, req.body || {}, req.user.id) });
+  } catch (error) { next(error); }
+});
+function saveReportSchedule(req, res, next) {
+  const device = enrollmentDevice(req, res);
+  if (!device) return;
+  try {
+    const group = saveScheduleGroup(device.id, req.params.id || null, req.body || {}, req.user.id);
+    res.status(req.params.id ? 200 : 201).json({ group, groups: listScheduleGroups(device.id), employees: getEmployees(device.id),
+      generalReportSchedule: getGeneralSchedule(device.id) });
+  } catch (error) { next(error); }
+}
+app.post('/api/device/report-schedules', saveReportSchedule);
+app.put('/api/device/report-schedules/:id', saveReportSchedule);
+
 app.get('/api/employees', async (req, res, next) => {
   try {
     if (!req.query.deviceId) return res.status(400).json({ message: 'Seleccione el biometrico.' });
@@ -391,6 +487,8 @@ app.get('/api/employees', async (req, res, next) => {
       device: snapshot.device,
       fetchedAt: snapshot.fetchedAt,
       employees: snapshot.employees,
+      reportScheduleGroups: snapshot.reportScheduleGroups,
+      generalReportSchedule: snapshot.generalReportSchedule,
       source: snapshot.source,
       sync: snapshot.sync,
     });
@@ -410,6 +508,7 @@ app.get('/api/events', async (req, res, next) => {
       from: req.query.from,
       to: req.query.to,
       employeeId: req.query.employeeId,
+      includeScheduleEdges: req.query.includeScheduleEdges === '1',
     });
     const events = snapshot.events;
 
@@ -424,7 +523,10 @@ app.get('/api/events', async (req, res, next) => {
         to: req.query.to || null,
       },
       employees: snapshot.employees,
+      reportScheduleGroups: snapshot.reportScheduleGroups,
+      generalReportSchedule: snapshot.generalReportSchedule,
       events,
+      boundaryEvents: snapshot.boundaryEvents,
       totals: {
         employees: snapshot.employees.length,
         events: events.length,
@@ -447,7 +549,6 @@ app.post('/api/device/sync', async (req, res, next) => {
 });
 
 // Serve static client assets in production
-const path = require('path');
 app.use(express.static(path.join(__dirname, '../dist')));
 
 // Fallback all non-API calls to client SPA
@@ -482,7 +583,7 @@ process.once('SIGTERM', async () => {
   nightlyTask?.stop();
   const timeout = setTimeout(() => process.exit(1), 25000);
   const closed = new Promise(resolve => server.close(resolve));
-  await Promise.all([closed, enrollments.shutdown(), deviceUsers.shutdown()]);
+  await Promise.all([closed, enrollments.shutdown(), deviceUsers.shutdown(), biometricBackups.shutdown()]);
   clearTimeout(timeout);
   process.exit(0);
 });

@@ -56,7 +56,7 @@ export default function DeviceUserAction({ device, employee, action, getJson, ap
     ? preview.canDelete && confirmationId === String(employee.employeeId)
     : name.trim() && new TextEncoder().encode(name.trim()).length <= 24 && name.trim() !== preview.employee.name);
 
-  return <div className="modal-overlay" onClick={() => { if (!writing) onClose(); }}>
+  return <div className="modal-overlay device-user-action-overlay" onClick={() => { if (!writing) onClose(); }}>
     <section ref={dialog} className="modal-content enrollment-modal" role="dialog" aria-modal="true" aria-labelledby="device-user-title" onClick={event => event.stopPropagation()} onKeyDown={keydown}>
       <div className="enrollment-heading"><h3 id="device-user-title">{deleting ? <Trash2 size={20} /> : <Edit size={20} />}{deleting ? 'Eliminar del biométrico' : 'Editar nombre en biométrico'}</h3>
         <button type="button" className="enrollment-close" title="Cerrar" aria-label="Cerrar administración del usuario" onClick={onClose} disabled={writing}><X size={20} /></button>
@@ -71,7 +71,7 @@ export default function DeviceUserAction({ device, employee, action, getJson, ap
         {error && <div className="enrollment-error" role="alert"><AlertTriangle size={17} /><span>{error}</span></div>}
         {preview && <fieldset className="enrollment-fields" disabled={busy}>
           {deleting ? <>
-            <div className="device-user-warning"><AlertTriangle size={18} /><span>Se eliminarán este usuario y sus huellas del reloj. No se podrán recuperar desde ASISTO. Su historial de asistencias se conserva.</span></div>
+            <div className="device-user-warning"><AlertTriangle size={18} /><span>Se eliminarán este usuario y sus huellas del reloj. La recuperación requiere un respaldo cifrado previo y su clave de recuperación. Su historial de asistencias se conserva.</span></div>
             {!preview.canDelete && <div className="enrollment-error" role="alert">No se permite eliminar usuarios con privilegios.</div>}
             <div className="field"><label htmlFor="device-user-confirmation">Escribe el ID {employee.employeeId} para confirmar</label><input id="device-user-confirmation" value={confirmationId} autoComplete="off" inputMode="numeric" onChange={event => setConfirmationId(event.target.value)} /></div>
           </> : <div className="field"><label htmlFor="device-user-name">Nombre en el biométrico</label><input id="device-user-name" value={name} maxLength={24} onChange={event => { setName(event.target.value); setConfirmed(false); }} /></div>}

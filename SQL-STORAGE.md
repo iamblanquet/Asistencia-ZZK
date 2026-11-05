@@ -10,6 +10,11 @@ Utiliza claves foraneas, transacciones, WAL y un tiempo de espera para escritura
 - events: clave primaria (device_id, employee_id, timestamp), con relacion al empleado del mismo reloj. Una descarga repetida no duplica la marcacion aunque cambie su origen.
 - users y user_devices: usuarios del portal y asignaciones a dispositivos con claves foraneas.
 - migrations y migration_issues: version y casos ambiguos de la migracion.
+- biometric_backup_actions: auditoria de descargas, vistas previas y recuperaciones, sin contrasenas ni plantillas.
+- report_schedule_groups y report_schedule_versions: horarios locales por biometrico con vigencias.
+- employee_schedule_assignments: pertenencia de colaboradores a grupos desde una fecha; NULL significa horario general.
+- report_schedule_audit: actor, ajustes anteriores y movimientos en bloque. Sin conexiones ni escrituras al reloj.
+- report_general_schedule_state y report_general_schedule_versions: horario original protegido y vigencias generales por biometrico; no se reescribe la configuracion anterior.
 
 Los ajustes particulares del dispositivo y las credenciales protegidas se guardan como campos JSON dentro de tablas SQL; empleados, eventos y asignaciones usan columnas y relaciones SQL.
 
@@ -110,6 +115,13 @@ Un nombre global antiguo solo se asigna automaticamente cuando se identifica un 
 Despues de migrar, los archivos antiguos no se actualizan ni se reimportan. La tabla migrations evita repetir la importacion al reiniciar.
 
 ## Respaldos y recuperacion
+
+Los respaldos SQL no contienen las plantillas de huellas. Los administradores pueden
+descargar un archivo cifrado independiente desde Personal > Respaldos y recuperar
+usuarios ausentes en el mismo F22/F22ID. Consultar [BIOMETRIC-BACKUP.md](BIOMETRIC-BACKUP.md)
+para formatos, custodia de claves de recuperacion, validaciones y limites de compatibilidad.
+El archivo SQLite no incluye la clave automatica `biometric-keys/recovery-key.pem`;
+respaldar tambien esa clave, o descargar su copia `.zkkey` y guardarla por separado.
 
 Para copiar una base activa usar la API backup de better-sqlite3 o la utilidad sqlite3 .backup. Para una copia por archivos detener antes el servicio y respaldar toda server/data, incluidos archivos -wal y -shm si existen. Copiar solo asistencia.sqlite mientras esta en uso puede producir un respaldo incompleto.
 

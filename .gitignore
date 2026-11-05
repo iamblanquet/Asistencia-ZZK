@@ -5,3 +5,6 @@ server/data/
 npm-debug.log*
 server/data/*.db
 scratch/chrome-profile/
+*.zkbio
+*.zkkey
+biometric-backup-key*.pem

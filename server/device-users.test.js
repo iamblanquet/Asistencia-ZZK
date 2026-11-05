@@ -103,6 +103,7 @@ function managerFixture(overrides = {}) {
   const saved = [];
   const deps = { db, withDevice: async (_device, work) => work({}), getDeviceById: id => devices.find(device => device.id === id),
     getRealtimeStatus: () => ({}), isEnrollmentBusy: () => false, read: async () => snapshot(), now: () => time,
+    authorizeActor: () => ({ allowPrivilegedUsers: true }),
     saveEmployees: (_id, users) => saved.push(users), mutate: async (_device, _action, _id, _input, control) => {
       control.beforeWrite(); control.writeAttempted(); return { users: [], previousName: 'Old', removedFingerprints: 2 };
     }, ...overrides };
@@ -147,4 +148,71 @@ test('active enrollment or realtime collection blocks management', async () => {
   await assert.rejects(enrollment.manager.preview(enrollment.devices[0], 'admin', '20'), /otra operacion/);
   const realtime = managerFixture({ getRealtimeStatus: () => ({ connecting: true }) });
   await assert.rejects(realtime.manager.preview(realtime.devices[0], 'admin', '20'), /tiempo real/);
+});
+
+test('management denies access by default and rechecks assignment after a preview read', async () => {
+  let connections = 0;
+  const denied = managerFixture({ authorizeActor: undefined, withDevice: async () => { connections++; } });
+  await assert.rejects(denied.manager.preview(denied.devices[0], 'operator', '20'), error => error.statusCode === 403);
+  assert.equal(connections, 0);
+  let permitted = true;
+  const revoked = managerFixture({ authorizeActor: () => permitted ? { allowPrivilegedUsers: false } : null,
+    read: async () => { permitted = false; return snapshot(); } });
+  await assert.rejects(revoked.manager.preview(revoked.devices[0], 'operator', '20'), error => error.statusCode === 403);
+});
+
+test('operator previews cannot expose privileged or unknown-role device users', async () => {
+  const { manager, devices } = managerFixture({ authorizeActor: () => ({ allowPrivilegedUsers: false }) });
+  await assert.rejects(manager.preview(devices[0], 'operator', '1'), error => error.statusCode === 403);
+  const unknownSnapshot = snapshot([record(7, '20', 'Custom', 1)]);
+  const unknown = managerFixture({ read: async () => unknownSnapshot,
+    authorizeActor: () => ({ allowPrivilegedUsers: false }) });
+  for (const role of [1, null, undefined]) {
+    unknownSnapshot.users[0].role = role;
+    await assert.rejects(unknown.manager.preview(unknown.devices[0], 'operator', '20'), error => error.statusCode === 403);
+  }
+});
+
+test('permission revoked while queued prevents mutation and records a failed action', async () => {
+  let permitted = true, mutated = false;
+  const { manager, db, devices } = managerFixture({ authorizeActor: () => permitted ? { allowPrivilegedUsers: false } : null,
+    mutate: async () => { mutated = true; } });
+  const preview = await manager.preview(devices[0], 'operator', '20');
+  const action = manager.execute(devices[0], 'operator', '20', 'delete', confirmed(preview.token));
+  permitted = false;
+  await assert.rejects(action, error => error.statusCode === 403);
+  assert.equal(mutated, false);
+  assert.equal(db.prepare('SELECT status FROM device_user_actions').get().status, 'failed');
+  assert.equal(manager.isBusy('a'), false);
+});
+
+test('permission revoked immediately before the wire write prevents that write', async () => {
+  let permitted = true, attempted = false;
+  const { manager, db, devices } = managerFixture({ authorizeActor: () => permitted ? { allowPrivilegedUsers: false } : null,
+    mutate: async (_d, _a, _id, _input, control) => {
+      permitted = false; control.beforeWrite(); attempted = true; control.writeAttempted();
+    } });
+  const preview = await manager.preview(devices[0], 'operator', '20');
+  await assert.rejects(manager.execute(devices[0], 'operator', '20', 'delete', confirmed(preview.token)), error => error.statusCode === 403);
+  assert.equal(attempted, false);
+  assert.equal(db.prepare('SELECT status FROM device_user_actions').get().status, 'failed');
+});
+
+test('demotion after an administrator preview cannot authorize a privileged rename or any privileged deletion', async () => {
+  let admin = true;
+  const { manager, db, devices } = managerFixture({ authorizeActor: () => ({ allowPrivilegedUsers: admin }) });
+  const preview = await manager.preview(devices[0], 'admin', '1');
+  admin = false;
+  assert.throws(() => manager.execute(devices[0], 'admin', '1', 'rename', { token: preview.token, confirmed: true, name: 'Changed' }), error => error.statusCode === 403);
+  admin = true;
+  assert.throws(() => manager.execute(devices[0], 'admin', '1', 'delete', { token: preview.token, confirmed: true, confirmationId: '1', deleteFingerprints: true }), error => error.statusCode === 403);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM device_user_actions').get().n, 0);
+});
+
+test('a target promoted since preview fails the identity revision check before a rename write', async () => {
+  const testCase = fixture('rename', { before: snapshot([record(7, '20', 'Mauricio', 14)]),
+    revision: { userHash: hash(record(7, '20', 'Mauricio', 0)) } });
+  await assert.rejects(testCase.run(), /cambiaron/);
+  assert.equal(testCase.attempted(), false);
+  assert.equal(testCase.commands.length, 0);
 });
