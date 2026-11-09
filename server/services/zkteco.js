@@ -1,5 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+
+// SQLite needs the initial access settings before its first migration.
+loadEnvFile();
+
 const ZKLib = require('zklib-js');
 const { REQUEST_DATA } = require('zklib-js/constants');
 const {
@@ -11,8 +15,7 @@ const { getEmployeeOverrides, saveEmployees, getEmployees } = require('./db');
 const { db } = require('./sqlite');
 const { getSavedAttendance, recordSyncSuccess } = require('./attendanceStore');
 const { readTcpPreparedData, validateRecordBuffer } = require('./zkTcpDownload');
-
-loadEnvFile();
+const { buildEmployeeIndex, resolveAttendanceIdentity } = require('./attendanceIdentity');
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, '../../.env');
@@ -177,23 +180,37 @@ function filterDuplicatePunches(events) {
 
 async function readAttendanceSnapshot(deviceConfig) {
   return withDevice(deviceConfig, async (device, config) => {
-    const deviceInfo = await safeRead(() => device.getInfo());
-    const usersResult = await readUsersCompatible(device);
-    const attendanceResult = await readAttendancesCompatible(device);
-
-    if (usersResult?.err || attendanceResult?.err) throw (usersResult?.err || attendanceResult?.err);
-    if ((attendanceResult?.data?.length || 0) < Number(deviceInfo?.logCounts || 0)) throw new Error('El equipo no entrego el historial completo.');
+    const download = await downloadFromDevice(device, config);
     return db.transaction(() => {
-      saveEmployees(config.id, normalizeEmployees(usersResult?.data || [], config.id));
-      const employees = getEmployees(config.id);
-      const employeeIndex = buildEmployeeIndex(employees);
-      const pulledEvents = normalizeEvents(attendanceResult?.data || [], employeeIndex);
-      if (pulledEvents.length !== attendanceResult.data.length) throw new Error('El historial contiene checadas con fechas invalidas.');
-      addStoredEvents(config.id, pulledEvents, 'device');
-      recordSyncSuccess(config.id, deviceInfo);
+      saveEmployees(config.id, download.employees);
+      const currentEmployeeIds = new Set(download.employees.map(employee => employee.employeeId));
+      const selectedEvents = config.currentUsersOnly === true
+        ? download.events.filter(event => currentEmployeeIds.has(event.employeeId)) : download.events;
+      addStoredEvents(config.id, selectedEvents, 'device');
+      recordSyncSuccess(config.id, download.deviceInfo);
       return getSavedAttendance(config);
     })();
   });
+}
+
+async function downloadAttendanceSnapshot(deviceConfig) {
+  return withDevice(deviceConfig, downloadFromDevice);
+}
+
+async function downloadFromDevice(device, config) {
+  const deviceInfo = await safeRead(() => device.getInfo());
+  const usersResult = await readUsersCompatible(device);
+  const attendanceResult = await readAttendancesCompatible(device);
+  if (usersResult?.err || attendanceResult?.err) throw (usersResult?.err || attendanceResult?.err);
+  if ((attendanceResult?.data?.length || 0) < Number(deviceInfo?.logCounts || 0)) throw new Error('El equipo no entrego el historial completo.');
+  const employees = normalizeEmployees(usersResult?.data || [], config.id);
+  const currentIds = new Set(employees.map(employee => employee.employeeId));
+  if (config.currentUsersOnly === true && deviceInfo?.userCounts != null &&
+      currentIds.size !== Number(deviceInfo.userCounts)) throw new Error('El equipo no entrego el padron completo.');
+  const historical = getEmployees(config.id).map(employee => ({ ...employee, devicePresent: false }));
+  const events = normalizeEvents(attendanceResult?.data || [], buildEmployeeIndex([...historical, ...employees]));
+  if (events.length !== attendanceResult.data.length) throw new Error('El historial contiene checadas con fechas o identidades invalidas.');
+  return { device: config, deviceInfo, connectionType: device.connectionType, employees, events };
 }
 
 function normalizeStoredEvents(records, employeeIndex) {
@@ -204,9 +221,9 @@ function normalizeStoredEvents(records, employeeIndex) {
         return null;
       }
 
-      const deviceUserId = cleanValue(record.deviceUserId || record.employeeId || record.userId);
-      const employee = employeeIndex.get(deviceUserId);
-      const employeeId = employee?.employeeId || cleanValue(record.employeeId) || deviceUserId;
+      const identity = resolveAttendanceIdentity(record, employeeIndex);
+      if (!identity) return null;
+      const { employee, employeeId, deviceUserId } = identity;
       const employeeName = employee?.name || cleanValue(record.employeeName) || `Colaborador ${employeeId || 'sin numero'}`;
 
       return {
@@ -214,7 +231,7 @@ function normalizeStoredEvents(records, employeeIndex) {
         employeeId,
         employeeName,
         deviceUserId,
-        uid: employee?.uid || cleanValue(record.uid),
+        uid: identity.uid,
         timestamp: timestamp.toISOString(),
         localDate: record.localDate || toDateKey(timestamp),
         localTime: record.localTime || toTimeKey(timestamp),
@@ -302,21 +319,6 @@ function normalizeEmployees(users, deviceId) {
     .sort((a, b) => naturalCompare(a.employeeId, b.employeeId));
 }
 
-function buildEmployeeIndex(employees) {
-  const index = new Map();
-
-  for (const employee of employees) {
-    for (const key of [employee.employeeId, ...(employee.devicePresent === false ? [] : [employee.uid])]) {
-      const normalizedKey = cleanValue(key);
-      if (normalizedKey) {
-        index.set(normalizedKey, employee);
-      }
-    }
-  }
-
-  return index;
-}
-
 function normalizeEvents(records, employeeIndex) {
   return records
     .map((record) => {
@@ -325,9 +327,9 @@ function normalizeEvents(records, employeeIndex) {
         return null;
       }
 
-      const deviceUserId = cleanValue(record.deviceUserId || record.userId || record.uid || record.userSn);
-      const employee = employeeIndex.get(deviceUserId);
-      const employeeId = employee?.employeeId || deviceUserId;
+      const identity = resolveAttendanceIdentity(record, employeeIndex);
+      if (!identity) return null;
+      const { employee, employeeId, deviceUserId } = identity;
       const employeeName = employee?.name || `Colaborador ${employeeId || 'sin numero'}`;
       const localDate = toDateKey(timestamp);
 
@@ -336,7 +338,8 @@ function normalizeEvents(records, employeeIndex) {
         employeeId,
         employeeName,
         deviceUserId,
-        uid: employee?.uid || cleanValue(record.userSn),
+        uid: identity.uid,
+        identitySource: identity.identitySource,
         timestamp: timestamp.toISOString(),
         localDate,
         localTime: toTimeKey(timestamp),
@@ -424,5 +427,6 @@ module.exports = {
   readDeviceStatus,
   readDeviceDiagnostics,
   readAttendanceSnapshot,
+  downloadAttendanceSnapshot,
   filterEvents,
 };

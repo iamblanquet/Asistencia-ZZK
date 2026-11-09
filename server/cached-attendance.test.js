@@ -13,9 +13,9 @@ fs.writeFileSync(path.join(dir, 'devices.db'), JSON.stringify([
 ]));
 fs.writeFileSync(path.join(dir, 'users.db'), JSON.stringify([{ id: 'usr-admin', username: 'admin', role: 'admin', password: crypto.createHash('sha256').update(password).digest('hex'), assignedDevices: [] }]));
 const { db } = require('./services/sqlite');
-const { addStoredEvents } = require('./services/eventStore');
+const { addStoredEvents, getStoredEvents } = require('./services/eventStore');
 const { getSavedAttendance } = require('./services/attendanceStore');
-const { getDeviceById } = require('./services/db');
+const { getDeviceById, addDevice } = require('./services/db');
 const { authenticate, createUser } = require('./services/auth');
 addStoredEvents('a', [
   { employeeId: '1', employeeName: 'Ana', timestamp: '2026-11-01T08:30:00-06:00' },
@@ -27,6 +27,9 @@ let connectCalls = 0;
 let online = false;
 let failure = null;
 let reportedLogCount = 1;
+let reportedUserCount = null;
+let attendanceRows = null;
+let userRows = null;
 let waitForRead = null;
 let readStarted = null;
 mock.method(ZKLib.prototype, 'createSocket', async function () {
@@ -35,15 +38,16 @@ mock.method(ZKLib.prototype, 'createSocket', async function () {
   this.connectionType = 'udp';
 });
 mock.method(ZKLib.prototype, 'disconnect', async () => {});
-mock.method(ZKLib.prototype, 'getInfo', async () => ({ logCounts: reportedLogCount }));
+mock.method(ZKLib.prototype, 'getInfo', async () => ({ logCounts: reportedLogCount,
+  ...(reportedUserCount === null ? {} : { userCounts: reportedUserCount }) }));
 mock.method(ZKLib.prototype, 'getUsers', async function () {
   if (readStarted) readStarted();
   if (waitForRead) await waitForRead;
-  return { data: [{ uid: '1', userId: '1', name: this.ip === '127.0.0.1' ? 'Ana' : 'Beto' }] };
+  return { data: userRows || [{ uid: '1', userId: '1', name: this.ip === '127.0.0.1' ? 'Ana' : 'Beto' }] };
 });
 mock.method(ZKLib.prototype, 'getAttendances', async () => {
   if (failure) return { data: [], err: new Error(failure) };
-  return { data: [{ deviceUserId: '1', recordTime: new Date('2026-11-02T18:50:00-06:00') }] };
+  return { data: attendanceRows || [{ deviceUserId: '1', recordTime: new Date('2026-11-02T18:50:00-06:00') }] };
 });
 const app = require('./index');
 let server, base, headers;
@@ -199,4 +203,98 @@ test('backup endpoints require an authenticated administrator and an explicit ex
   assert.equal(invalid.status, 400);
   assert.equal((await invalid.json()).detail, undefined);
   assert.equal(connectCalls, before);
+});
+
+let currentDevice;
+test('current-roster snapshots remain stable on resync without changing normal history', async () => {
+  currentDevice = addDevice({ name: 'Current roster', ip: '127.0.0.3', port: 4370, currentUsersOnly: true });
+  online = true;
+  reportedLogCount = 2;
+  reportedUserCount = 1;
+  attendanceRows = [
+    { deviceUserId: '1', recordTime: new Date('2026-11-02T18:50:00-06:00') },
+    { deviceUserId: '9', recordTime: new Date('2026-11-02T18:55:00-06:00') },
+  ];
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await request(`/api/device/sync?deviceId=${currentDevice.id}`, 'POST');
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.data.totals, { employees: 1, events: 1 });
+      assert.deepEqual(getStoredEvents(currentDevice.id).map(event => event.employeeId), ['1']);
+    }
+    const archive = addDevice({ name: 'Full history', ip: '127.0.0.4', port: 4370 });
+    const full = await request(`/api/device/sync?deviceId=${archive.id}`, 'POST');
+    assert.equal(full.status, 200);
+    assert.deepEqual(full.data.totals, { employees: 2, events: 2 });
+    assert.deepEqual(getStoredEvents(archive.id).map(event => event.employeeId), ['1', '9']);
+    assert.equal(getSavedAttendance(getDeviceById('a')).events.length, 3);
+  } finally {
+    attendanceRows = null;
+    reportedLogCount = 1;
+    reportedUserCount = null;
+  }
+});
+
+test('current-roster queries hide historical IDs without deleting archived rows', async () => {
+  addStoredEvents(currentDevice.id, [
+    { employeeId: '9', timestamp: '2026-11-01T08:00:00-06:00' },
+  ]);
+  const result = await request(`/api/events?deviceId=${currentDevice.id}&from=2026-11-02&to=2026-11-02&includeScheduleEdges=1`);
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.data.employees.map(employee => employee.employeeId), ['1']);
+  assert.deepEqual(result.data.events.map(event => event.employeeId), ['1']);
+  assert.equal(result.data.boundaryEvents.length, 0);
+  assert.equal(getStoredEvents(currentDevice.id).length, 2);
+});
+
+test('an incomplete current roster cannot be recorded as a successful snapshot', async () => {
+  const before = getSavedAttendance(currentDevice);
+  reportedUserCount = 2;
+  try {
+    const result = await request(`/api/device/sync?deviceId=${currentDevice.id}`, 'POST');
+    assert.equal(result.status, 503);
+    assert.equal(getSavedAttendance(currentDevice).fetchedAt, before.fetchedAt);
+    assert.equal(getStoredEvents(currentDevice.id).length, 2);
+  } finally { reportedUserCount = null; }
+});
+
+test('sync never swaps IDs 2 and 3 with UID aliases 52 and 53, including after repeated downloads', async () => {
+  const device = addDevice({ name: 'ID collision', ip: '127.0.0.7', currentUsersOnly: true });
+  userRows = [
+    { userId: '2', uid: '37', name: 'Two' }, { userId: '3', uid: '38', name: 'Three' },
+    { userId: '52', uid: '2', name: 'Fifty two' }, { userId: '53', uid: '3', name: 'Fifty three' },
+  ];
+  attendanceRows = [
+    { deviceUserId: '2', userSn: '37', recordTime: new Date('2026-11-09T08:01:03-06:00') },
+    { deviceUserId: '3', userSn: '38', recordTime: new Date('2026-11-09T08:02:57-06:00') },
+    { deviceUserId: '52', userSn: '2', recordTime: new Date('2026-07-20T16:00:07-06:00') },
+    { deviceUserId: '53', userSn: '3', recordTime: new Date('2026-07-28T07:17:59-06:00') },
+    { deviceUserId: '37', userSn: '9', recordTime: new Date('2026-11-07T08:00:00-06:00') },
+  ];
+  reportedUserCount = 4;
+  reportedLogCount = 5;
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await request(`/api/device/sync?deviceId=${device.id}`, 'POST');
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.data.totals, { employees: 4, events: 4 });
+      const saved = getStoredEvents(device.id);
+      assert.ok(saved.every(event => event.employeeId === event.deviceUserId));
+      assert.deepEqual(saved.filter(event => event.localDate === '2026-11-09').map(event => event.employeeId), ['2', '3']);
+      assert.equal(saved.find(event => event.employeeId === '2').uid, '37');
+      assert.equal(saved.find(event => event.employeeId === '3').uid, '38');
+      assert.equal(saved.some(event => event.employeeId === '37'), false);
+    }
+    const before = getStoredEvents(device.id);
+    const { downloadAttendanceSnapshot } = require('./services/zkteco');
+    const download = await downloadAttendanceSnapshot(getDeviceById(device.id));
+    assert.equal(download.events.length, 5);
+    assert.deepEqual(getStoredEvents(device.id), before);
+    assert.ok(download.events.every(event => event.identitySource === 'employee-id'));
+  } finally {
+    userRows = null;
+    attendanceRows = null;
+    reportedUserCount = null;
+    reportedLogCount = 1;
+  }
 });

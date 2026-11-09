@@ -19,6 +19,10 @@ function getSavedAttendance(device, filters = {}) {
     throw error;
   }
   const status = db.prepare('SELECT * FROM device_sync_status WHERE device_id=?').get(device.id);
+  const employees = getEmployees(device.id).filter(employee =>
+    device.currentUsersOnly !== true || employee.devicePresent === true);
+  const currentEmployeeIds = device.currentUsersOnly === true
+    ? new Set(employees.map(employee => employee.employeeId)) : null;
   const seen = new Set();
   const padded = { ...filters };
   if (filters.includeScheduleEdges) {
@@ -31,6 +35,7 @@ function getSavedAttendance(device, filters = {}) {
     if (filters.to) padded.to = shiftDate(filters.to, 1);
   }
   const saved = getStoredEvents(device.id, padded).filter(event => {
+    if (currentEmployeeIds && !currentEmployeeIds.has(event.employeeId)) return false;
     // Keep the same minute-level duplicate handling as the previous live query.
     const key = `${event.employeeId}:${event.localDate}:${event.localTime}`;
     if (seen.has(key)) return false;
@@ -40,7 +45,7 @@ function getSavedAttendance(device, filters = {}) {
   const inRange = event => (!filters.from || event.localDate >= filters.from) && (!filters.to || event.localDate <= filters.to);
   const events = saved.filter(inRange);
   return {
-    device, employees: getEmployees(device.id), events, reportScheduleGroups: listScheduleGroups(device.id),
+    device, employees, events, reportScheduleGroups: listScheduleGroups(device.id),
     generalReportSchedule: getGeneralSchedule(device.id),
     boundaryEvents: filters.includeScheduleEdges ? saved.filter(event => !inRange(event)) : [],
     deviceInfo: status?.device_info ? JSON.parse(status.device_info) : null,
