@@ -61,3 +61,20 @@ node --test server/attendance-identity.test.js server/attendance-identity-repair
 Cubren colisiones entre ID y UID, IDs historicos sin usuario actual, descargas
 incompletas, sincronizaciones repetidas, respaldos, aislamiento por biometrico y
 reversion atomica si falla una comprobacion.
+
+## Nombres actuales del reloj
+
+La opcion `namesFromDevice: true` en la configuracion de un biometrico dentro de
+ASISTO toma los nombres de su padron verificado y elimina los alias locales de
+los colaboradores presentes. No cambia la configuracion del reloj ni las checadas.
+Los demas biometricos mantienen su politica de nombres y los alias historicos no
+se eliminan si el colaborador ya no esta presente.
+
+La lectura de nombres exige IDs explicitos, un padron completo y nombres con
+codificacion valida. Conserva separados ID y UID y admite nombres UTF-8. Cuando
+esta opcion esta activa, no se permiten nuevos alias locales que oculten el
+nombre recibido del reloj. La opcion queda en la base de produccion, no en `.env`.
+
+```sh
+node --test server/device-names.test.js
+```

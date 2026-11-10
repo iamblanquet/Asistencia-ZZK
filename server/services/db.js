@@ -38,13 +38,19 @@ function getEmployeeOverrides(deviceId) {
   return Object.fromEntries(db.prepare('SELECT employee_id,override_name FROM employees WHERE device_id=? AND override_name IS NOT NULL').all(String(deviceId)).map(row => [row.employee_id, row.override_name]));
 }
 function updateEmployeeName(deviceId, employeeId, name) {
-  if (!getDeviceById(deviceId)) throw new Error('Biometrico no encontrado.');
+  const device = getDeviceById(deviceId);
+  if (!device) throw new Error('Biometrico no encontrado.');
+  if (device.namesFromDevice === true) {
+    const message = 'Este biometrico toma los nombres del reloj y no permite alias locales.';
+    throw Object.assign(new Error(message), { statusCode: 409, publicMessage: message });
+  }
   const updated = db.prepare('UPDATE employees SET override_name=? WHERE device_id=? AND employee_id=?').run(String(name).trim(), String(deviceId), String(employeeId));
   if (!updated.changes) throw new Error('Colaborador no encontrado en este biometrico.');
   return { deviceId, employeeId, name };
 }
 function saveEmployees(deviceId, values) {
   // Callers provide a complete verified roster; missing employees remain historical.
+  const namesFromDevice = getDeviceById(deviceId)?.namesFromDevice === true;
   db.transaction(() => {
     const checkedAt = new Date().toISOString();
     db.prepare(`INSERT INTO employee_device_status(device_id,employee_id,present,checked_at)
@@ -54,6 +60,8 @@ function saveEmployees(deviceId, values) {
       ON CONFLICT(device_id,employee_id) DO UPDATE SET present=1,checked_at=excluded.checked_at`);
     for (const value of values) {
       employee(deviceId, value);
+      if (namesFromDevice) db.prepare('UPDATE employees SET override_name=NULL WHERE device_id=? AND employee_id=?')
+        .run(deviceId, String(value.employeeId));
       present.run(deviceId, String(value.employeeId), checkedAt);
     }
   })();

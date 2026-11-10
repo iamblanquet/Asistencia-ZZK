@@ -197,15 +197,32 @@ async function downloadAttendanceSnapshot(deviceConfig) {
   return withDevice(deviceConfig, downloadFromDevice);
 }
 
+async function downloadEmployeeSnapshot(deviceConfig) {
+  return withDevice(deviceConfig, async (device, config) => {
+    const deviceInfo = await device.getInfo();
+    const result = await readUsersCompatible(device);
+    if (result.err) throw result.err;
+    const employees = normalizeEmployees(result.data || [], config);
+    if (!Number.isInteger(deviceInfo?.userCounts) || employees.length !== deviceInfo.userCounts ||
+        new Set(employees.map(employee => employee.employeeId)).size !== employees.length) {
+      throw new Error('El equipo no entrego el padron completo de colaboradores.');
+    }
+    return { device: config, deviceInfo, employees, connectionType: device.connectionType };
+  });
+}
+
 async function downloadFromDevice(device, config) {
   const deviceInfo = await safeRead(() => device.getInfo());
   const usersResult = await readUsersCompatible(device);
   const attendanceResult = await readAttendancesCompatible(device);
   if (usersResult?.err || attendanceResult?.err) throw (usersResult?.err || attendanceResult?.err);
   if ((attendanceResult?.data?.length || 0) < Number(deviceInfo?.logCounts || 0)) throw new Error('El equipo no entrego el historial completo.');
-  const employees = normalizeEmployees(usersResult?.data || [], config.id);
+  const employees = normalizeEmployees(usersResult?.data || [], config);
   const currentIds = new Set(employees.map(employee => employee.employeeId));
-  if (config.currentUsersOnly === true && deviceInfo?.userCounts != null &&
+  if (config.namesFromDevice === true && (!Number.isInteger(deviceInfo?.userCounts) || employees.length !== deviceInfo.userCounts)) {
+    throw new Error('El equipo no entrego el padron completo.');
+  }
+  if ((config.currentUsersOnly === true || config.namesFromDevice === true) && deviceInfo?.userCounts != null &&
       currentIds.size !== Number(deviceInfo.userCounts)) throw new Error('El equipo no entrego el padron completo.');
   const historical = getEmployees(config.id).map(employee => ({ ...employee, devicePresent: false }));
   const events = normalizeEvents(attendanceResult?.data || [], buildEmployeeIndex([...historical, ...employees]));
@@ -265,7 +282,10 @@ async function readTcpUsers(tcp) {
   const users = [];
 
   while (userData.length >= USER_PACKET_SIZE) {
-    users.push(decodeUserData72(userData.subarray(0, USER_PACKET_SIZE)));
+    const record = userData.subarray(0, USER_PACKET_SIZE);
+    const user = decodeUserData72(record);
+    user.nameUtf8 = record.subarray(11, 35).toString('utf8').split('\0')[0];
+    users.push(user);
     userData = userData.subarray(USER_PACKET_SIZE);
   }
 
@@ -297,15 +317,22 @@ async function safeRead(read) {
   }
 }
 
-function normalizeEmployees(users, deviceId) {
-  const overrides = getEmployeeOverrides(deviceId);
+function normalizeEmployees(users, config) {
+  if (config.namesFromDevice === true && users.some(user => !cleanValue(user.userId))) {
+    throw new Error('Un nombre del reloj no tiene un ID explicito de colaborador.');
+  }
+  const overrides = config.namesFromDevice === true ? {} : getEmployeeOverrides(config.id);
   return users
     .map((user) => {
       const uid = cleanValue(user.uid);
       const userId = cleanValue(user.userId);
       const employeeId = userId || uid;
       const dbName = overrides[String(employeeId)];
-      const name = dbName || cleanValue(user.name) || `Colaborador ${employeeId || uid}`;
+      const clockName = config.namesFromDevice === true ? user.nameUtf8 ?? user.name : user.name;
+      if (config.namesFromDevice === true && String(clockName || '').includes('\ufffd')) {
+        throw new Error('El nombre recibido del reloj tiene una codificacion invalida.');
+      }
+      const name = dbName || cleanValue(clockName) || `Colaborador ${employeeId || uid}`;
 
       return {
         uid,
@@ -428,5 +455,6 @@ module.exports = {
   readDeviceDiagnostics,
   readAttendanceSnapshot,
   downloadAttendanceSnapshot,
+  downloadEmployeeSnapshot,
   filterEvents,
 };
