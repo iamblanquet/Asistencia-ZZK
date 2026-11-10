@@ -285,6 +285,7 @@ async function readTcpUsers(tcp) {
     const record = userData.subarray(0, USER_PACKET_SIZE);
     const user = decodeUserData72(record);
     user.nameUtf8 = record.subarray(11, 35).toString('utf8').split('\0')[0];
+    user.nameLatin1 = record.subarray(11, 35).toString('latin1').split('\0')[0];
     users.push(user);
     userData = userData.subarray(USER_PACKET_SIZE);
   }
@@ -318,6 +319,10 @@ async function safeRead(read) {
 }
 
 function normalizeEmployees(users, config) {
+  const nameEncoding = config.nameEncoding || 'utf8';
+  if (config.namesFromDevice === true && !['utf8', 'latin1'].includes(nameEncoding)) {
+    throw new Error('La codificacion de nombres del biometrico no esta soportada.');
+  }
   if (config.namesFromDevice === true && users.some(user => !cleanValue(user.userId))) {
     throw new Error('Un nombre del reloj no tiene un ID explicito de colaborador.');
   }
@@ -328,16 +333,26 @@ function normalizeEmployees(users, config) {
       const userId = cleanValue(user.userId);
       const employeeId = userId || uid;
       const dbName = overrides[String(employeeId)];
-      const clockName = config.namesFromDevice === true ? user.nameUtf8 ?? user.name : user.name;
-      if (config.namesFromDevice === true && String(clockName || '').includes('\ufffd')) {
+      if (config.namesFromDevice === true && nameEncoding === 'latin1' && typeof user.nameLatin1 !== 'string') {
+        throw new Error('No se recibieron los bytes originales del nombre para leer Latin-1.');
+      }
+      const clockName = config.namesFromDevice === true
+        ? nameEncoding === 'latin1' ? user.nameLatin1 : user.nameUtf8 ?? user.name : user.name;
+      const unreadable = config.namesFromDevice === true &&
+        /[\u0000-\u001f\u007f-\u009f\ufffd]/.test(String(clockName || ''));
+      if (unreadable && config.unreadableNamePolicy !== 'placeholder') {
         throw new Error('El nombre recibido del reloj tiene una codificacion invalida.');
       }
-      const name = dbName || cleanValue(clockName) || `Colaborador ${employeeId || uid}`;
+      const name = unreadable ? `Colaborador ${employeeId}`
+        : dbName || cleanValue(clockName) || `Colaborador ${employeeId || uid}`;
 
       return {
         uid,
         employeeId,
         name,
+        ...(config.namesFromDevice === true ? {
+          nameStatus: unreadable ? 'unreadable' : cleanValue(clockName) ? 'device' : 'empty',
+        } : {}),
         role: user.role ?? null,
         cardNo: cleanValue(user.cardno),
       };

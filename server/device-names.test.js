@@ -91,3 +91,52 @@ test('partial or duplicate rosters cannot update names', async () => {
   finally { users = [{ userId: '1', uid: 44, name: 'Sebastian' }]; }
   assert.deepEqual(getEmployees(current.id), before);
 });
+
+test('legacy Latin-1 names keep their accents without affecting IDs or attendance', async () => {
+  const device = addDevice({ name: 'Latin-1 clock', ip: '127.0.0.3', namesFromDevice: true, nameEncoding: 'latin1' });
+  users = [{ userId: '68', uid: 7, name: 'Josi', nameUtf8: 'Jos\ufffd',
+    nameLatin1: Buffer.from('4a6f73e9204a75616e', 'hex').toString('latin1') }];
+  try {
+    const snapshot = await downloadEmployeeSnapshot(device);
+    assert.equal(snapshot.employees[0].employeeId, '68');
+    assert.equal(snapshot.employees[0].uid, '7');
+    assert.equal(snapshot.employees[0].name, 'Jos\u00e9 Juan');
+    assert.equal(snapshot.employees[0].nameStatus, 'device');
+    saveEmployees(device.id, snapshot.employees);
+    assert.equal(getEmployees(device.id)[0].name, 'Jos\u00e9 Juan');
+    assert.equal(rawEvents(device.id).length, 0);
+  } finally { users = [{ userId: '1', uid: 44, name: 'Sebastian' }]; }
+});
+
+test('unreadable names use only the explicit ID when the placeholder policy is authorized', async () => {
+  const device = addDevice({ name: 'Unreadable clock names', ip: '127.0.0.4', namesFromDevice: true,
+    nameEncoding: 'latin1', unreadableNamePolicy: 'placeholder' });
+  users = [{ userId: '133', uid: 68, name: 'Wrong alias', nameLatin1: '\u00a8+\u0087' }];
+  saveEmployees(device.id, [{ employeeId: '133', uid: '68', name: 'Previous name' }]);
+  addStoredEvents(device.id, [{ employeeId: '133', deviceUserId: '133', uid: '500', timestamp: '2026-11-10T15:00:00Z' }], 'device');
+  const before = rawEvents(device.id);
+  try {
+    const snapshot = await downloadEmployeeSnapshot(device);
+    assert.equal(snapshot.employees[0].name, 'Colaborador 133');
+    assert.equal(snapshot.employees[0].nameStatus, 'unreadable');
+    assert.equal(snapshot.employees[0].employeeId, '133');
+    saveEmployees(device.id, snapshot.employees);
+    saveEmployees(device.id, [{ employeeId: '133', uid: '68', name: 'Legacy corrupted cache' }]);
+    assert.equal(getEmployees(device.id)[0].name, 'Colaborador 133');
+    assert.deepEqual(rawEvents(device.id), before);
+    assert.equal(getStoredEvents(device.id)[0].employeeId, '133');
+  } finally { users = [{ userId: '1', uid: 44, name: 'Sebastian' }]; }
+});
+
+test('placeholder settings cannot bypass explicit IDs, roster completeness or encoding validation', async () => {
+  const device = addDevice({ name: 'Strict placeholders', ip: '127.0.0.5', namesFromDevice: true,
+    nameEncoding: 'latin1', unreadableNamePolicy: 'placeholder' });
+  users = [{ uid: 133, nameLatin1: '\u0087' }];
+  try { await assert.rejects(downloadEmployeeSnapshot(device), /ID explicito/); }
+  finally { users = [{ userId: '1', uid: 44, name: 'Sebastian' }]; }
+  await assert.rejects(downloadEmployeeSnapshot(device), /bytes originales/);
+  await assert.rejects(downloadEmployeeSnapshot({ ...device, nameEncoding: 'unknown' }), /no esta soportada/);
+  users = [{ userId: '133', uid: 68, nameLatin1: '\u0001 Corrupted' }];
+  try { await assert.rejects(downloadEmployeeSnapshot({ ...device, unreadableNamePolicy: undefined }), /codificacion/); }
+  finally { users = [{ userId: '1', uid: 44, name: 'Sebastian' }]; }
+});

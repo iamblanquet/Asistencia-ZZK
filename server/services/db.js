@@ -59,8 +59,11 @@ function saveEmployees(deviceId, values) {
     const present = db.prepare(`INSERT INTO employee_device_status(device_id,employee_id,present,checked_at) VALUES (?,?,1,?)
       ON CONFLICT(device_id,employee_id) DO UPDATE SET present=1,checked_at=excluded.checked_at`);
     for (const value of values) {
-      employee(deviceId, value);
-      if (namesFromDevice) db.prepare('UPDATE employees SET override_name=NULL WHERE device_id=? AND employee_id=?')
+      const verifiedName = ['device', 'empty', 'unreadable'].includes(value.nameStatus);
+      const previous = namesFromDevice && !verifiedName
+        ? db.prepare('SELECT name FROM employees WHERE device_id=? AND employee_id=?').get(deviceId, String(value.employeeId)) : null;
+      employee(deviceId, previous ? { ...value, name: previous.name } : value);
+      if (namesFromDevice && verifiedName) db.prepare('UPDATE employees SET override_name=NULL WHERE device_id=? AND employee_id=?')
         .run(deviceId, String(value.employeeId));
       present.run(deviceId, String(value.employeeId), checkedAt);
     }

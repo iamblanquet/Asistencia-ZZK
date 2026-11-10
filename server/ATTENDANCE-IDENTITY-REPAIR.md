@@ -75,6 +75,15 @@ codificacion valida. Conserva separados ID y UID y admite nombres UTF-8. Cuando
 esta opcion esta activa, no se permiten nuevos alias locales que oculten el
 nombre recibido del reloj. La opcion queda en la base de produccion, no en `.env`.
 
+La codificacion predeterminada es UTF-8. Un reloj con nombres antiguos puede usar
+`nameEncoding: "latin1"`; se decodifican los bytes originales del campo nombre,
+sin cambiar los IDs. No se intenta adivinar la codificacion a partir de un UID.
+La opcion explicita `unreadableNamePolicy: "placeholder"` permite mostrar
+`Colaborador ID` si el nombre contiene caracteres de control o no es legible.
+Sin esa autorizacion, la lectura falla sin reemplazar los nombres guardados.
+Los nombres verificados no se sobrescriben con valores de lectores de cache
+que no indiquen su validacion.
+
 ```sh
 node --test server/device-names.test.js
 ```
